@@ -51,7 +51,6 @@ exports.createUser = async (req, res) => {
 
 
 /* ================= LIST USERS (UI PERFECT FILTER MATCH) ================= */
-
 exports.listUsers = async (req, res) => {
   try {
     const {
@@ -61,33 +60,25 @@ exports.listUsers = async (req, res) => {
       userName,
       loginId,
       mobile,
-      templeId, // optional filter
+      templeId,
+      sortField,
+      sortOrder
     } = req.body || {};
 
     const filter = {};
 
-    /* ===== Temple Logic ===== */
+    /* ================= TEMPLE SECURITY ================= */
+
     if (req.user.role === "Admin") {
-      // Admin can see all OR filter by temple
       if (templeId) {
         filter.templeId = templeId;
       }
     } else {
-      // Normal users only see their own temple
       filter.templeId = req.user.templeId;
     }
 
-    /* ===== Global Search ===== */
-    if (search) {
-      filter.$or = [
-        { userName: { $regex: search, $options: "i" } },
-        { loginId: { $regex: search, $options: "i" } },
-        { mobile: { $regex: search, $options: "i" } },
-        { role: { $regex: search, $options: "i" } },
-      ];
-    }
+    /* ================= COLUMN FILTERS ================= */
 
-    /* ===== Header Filters ===== */
     if (role && role !== "Role") {
       filter.role = role;
     }
@@ -96,7 +87,6 @@ exports.listUsers = async (req, res) => {
       filter.status = status;
     }
 
-    /* ===== Column Filters ===== */
     if (userName) {
       filter.userName = { $regex: userName, $options: "i" };
     }
@@ -109,8 +99,29 @@ exports.listUsers = async (req, res) => {
       filter.mobile = { $regex: mobile, $options: "i" };
     }
 
-    const users = await User.find(filter) 
-      .sort({ createdAt: -1 });
+    /* ================= GLOBAL SEARCH ================= */
+
+    if (search) {
+      filter.$or = [
+        { userName: { $regex: search, $options: "i" } },
+        { loginId: { $regex: search, $options: "i" } },
+        { mobile: { $regex: search, $options: "i" } },
+        { role: { $regex: search, $options: "i" } },
+        { status: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    /* ================= SORT ================= */
+
+    let sortOptions = { createdAt: -1 };
+
+    if (sortField) {
+      sortOptions = {
+        [sortField]: sortOrder === "asc" ? 1 : -1,
+      };
+    }
+
+    const users = await User.find(filter).sort(sortOptions);
 
     return res.json(users);
 
@@ -118,7 +129,6 @@ exports.listUsers = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
-
 
 /* ================= UPDATE USER ================= */
 

@@ -58,11 +58,10 @@ exports.createInward = async (req, res) => {
 };
 
 
-/* ================= LIST INWARD (WITH FILTER) ================= */
-
 exports.getInwardList = async (req, res) => {
   try {
     const {
+      search,          // ✅ GLOBAL SEARCH KEY
       vendorName,
       vendorMobile,
       vendorAddress,
@@ -70,11 +69,15 @@ exports.getInwardList = async (req, res) => {
       status,
       startDate,
       endDate,
+      sortField,
+      sortOrder
     } = req.body || {};
 
     const filter = {
       templeId: req.user.templeId,
     };
+
+    /* ================= COLUMN FILTERS ================= */
 
     if (vendorName) {
       filter.vendorName = { $regex: vendorName, $options: "i" };
@@ -103,8 +106,29 @@ exports.getInwardList = async (req, res) => {
       };
     }
 
-    const inwards = await Inward.find(filter)
-      .sort({ createdAt: -1 });
+    /* ================= GLOBAL SEARCH ================= */
+
+    if (search) {
+      filter.$or = [
+        { vendorName: { $regex: search, $options: "i" } },
+        { vendorMobile: { $regex: search, $options: "i" } },
+        { vendorAddress: { $regex: search, $options: "i" } },
+        { challanNo: { $regex: search, $options: "i" } },
+        { inwardNo: { $regex: search, $options: "i" } }, // if you have this field
+      ];
+    }
+
+    /* ================= SORT ================= */
+
+    let sortOptions = { createdAt: -1 };
+
+    if (sortField) {
+      sortOptions = {
+        [sortField]: sortOrder === "asc" ? 1 : -1,
+      };
+    }
+
+    const inwards = await Inward.find(filter).sort(sortOptions);
 
     const result = await Promise.all(
       inwards.map(async (inward) => {
@@ -124,7 +148,6 @@ exports.getInwardList = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
-
 /* ================= UPDATE INWARD ================= */
 
 exports.updateInward = async (req, res) => {

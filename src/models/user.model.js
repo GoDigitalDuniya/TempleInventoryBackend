@@ -38,7 +38,7 @@ const userSchema = new mongoose.Schema({
 
   password: {
     type: String,
-    required: true   // ❗ no select:false
+    required: true  
   },
 
   status: {

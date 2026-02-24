@@ -67,6 +67,7 @@ exports.createOutward = async (req, res) => {
 exports.getOutwardList = async (req, res) => {
   try {
     const {
+      search,          // ✅ GLOBAL SEARCH
       customerName,
       customerMobile,
       outwardNo,
@@ -74,11 +75,15 @@ exports.getOutwardList = async (req, res) => {
       status,
       startDate,
       endDate,
+      sortField,
+      sortOrder
     } = req.body || {};
 
     const filter = {
       templeId: req.user.templeId,
     };
+
+    /* ================= COLUMN FILTERS ================= */
 
     if (customerName) {
       filter.customerName = { $regex: customerName, $options: "i" };
@@ -103,9 +108,30 @@ exports.getOutwardList = async (req, res) => {
       };
     }
 
+    /* ================= GLOBAL SEARCH ================= */
+
+    if (search) {
+      filter.$or = [
+        { customerName: { $regex: search, $options: "i" } },
+        { customerMobile: { $regex: search, $options: "i" } },
+        { outwardNo: { $regex: search, $options: "i" } },
+        { status: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    /* ================= SORT ================= */
+
+    let sortOptions = { createdAt: -1 };
+
+    if (sortField) {
+      sortOptions = {
+        [sortField]: sortOrder === "asc" ? 1 : -1,
+      };
+    }
+
     const outwards = await Outward.find(filter)
       .populate("createdBy", "userName role")
-      .sort({ createdAt: -1 });
+      .sort(sortOptions);
 
     const result = await Promise.all(
       outwards.map(async (outward) => {
@@ -113,12 +139,27 @@ exports.getOutwardList = async (req, res) => {
           outwardId: outward._id,
         }).populate("productId", "productName");
 
-        // 🔍 Outward By filter applied after populate
+        // ✅ keep your outwardBy logic EXACT
         if (
           outwardBy &&
           !outward.createdBy?.userName
             ?.toLowerCase()
             .includes(outwardBy.toLowerCase())
+        ) {
+          return null;
+        }
+
+        // ✅ apply global search on outwardBy safely
+        if (
+          search &&
+          outward.createdBy?.userName &&
+          !outward.createdBy.userName
+            .toLowerCase()
+            .includes(search.toLowerCase()) &&
+          !outward.customerName?.toLowerCase().includes(search.toLowerCase()) &&
+          !outward.customerMobile?.includes(search) &&
+          !outward.outwardNo?.toLowerCase().includes(search.toLowerCase()) &&
+          !outward.status?.toLowerCase().includes(search.toLowerCase())
         ) {
           return null;
         }

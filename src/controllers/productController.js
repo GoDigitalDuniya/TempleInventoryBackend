@@ -26,9 +26,6 @@ exports.createProduct = async (req, res) => {
   }
 };
 
-
-/* ================= LIST PRODUCTS (WITH FILTERS) ================= */
-
 exports.listProducts = async (req, res) => {
   try {
     const {
@@ -41,19 +38,15 @@ exports.listProducts = async (req, res) => {
       templeName,
       lastInwardDate,
       lastOutwardDate,
+      sortField,
+      sortOrder
     } = req.body || {};
 
     const matchStage = {
       templeId: req.user.templeId,
     };
 
-    /* ===== Global Search ===== */
-    if (search) {
-      matchStage.$or = [
-        { productName: { $regex: search, $options: "i" } },
-        { category: { $regex: search, $options: "i" } },
-      ];
-    }
+    /* ================= COLUMN FILTERS ================= */
 
     if (status && status !== "All") {
       matchStage.status = status;
@@ -75,6 +68,8 @@ exports.listProducts = async (req, res) => {
       matchStage.currentStock = Number(currentStock);
     }
 
+    /* ================= BASE PIPELINE ================= */
+
     const pipeline = [
       { $match: matchStage },
 
@@ -87,19 +82,6 @@ exports.listProducts = async (req, res) => {
         },
       },
       { $unwind: { path: "$temple", preserveNullAndEmptyArrays: true } },
-
-      ...(templeName
-        ? [
-            {
-              $match: {
-                "temple.templeName": {
-                  $regex: templeName,
-                  $options: "i",
-                },
-              },
-            },
-          ]
-        : []),
 
       {
         $lookup: {
@@ -125,43 +107,64 @@ exports.listProducts = async (req, res) => {
           templeName: "$temple.templeName",
         },
       },
-
-      ...(lastInwardDate
-        ? [
-            {
-              $match: {
-                lastInwardDate: {
-                  $gte: new Date(lastInwardDate + "T00:00:00"),
-                  $lte: new Date(lastInwardDate + "T23:59:59"),
-                },
-              },
-            },
-          ]
-        : []),
-
-      ...(lastOutwardDate
-        ? [
-            {
-              $match: {
-                lastOutwardDate: {
-                  $gte: new Date(lastOutwardDate + "T00:00:00"),
-                  $lte: new Date(lastOutwardDate + "T23:59:59"),
-                },
-              },
-            },
-          ]
-        : []),
-
-      {
-        $project: {
-          inwardItems: 0,
-          outwardItems: 0,
-          temple: 0,
-        },
-      },
-
-      { $sort: { createdAt: -1 } },
     ];
+
+    /* ================= GLOBAL SEARCH (AFTER LOOKUPS) ================= */
+
+    if (search) {
+      pipeline.push({
+        $match: {
+          $or: [
+            { productName: { $regex: search, $options: "i" } },
+            { category: { $regex: search, $options: "i" } },
+            { templeName: { $regex: search, $options: "i" } },
+            { status: { $regex: search, $options: "i" } },
+          ],
+        },
+      });
+    }
+
+    /* ================= DATE FILTERS ================= */
+
+    if (lastInwardDate) {
+      pipeline.push({
+        $match: {
+          lastInwardDate: {
+            $gte: new Date(lastInwardDate + "T00:00:00"),
+            $lte: new Date(lastInwardDate + "T23:59:59"),
+          },
+        },
+      });
+    }
+
+    if (lastOutwardDate) {
+      pipeline.push({
+        $match: {
+          lastOutwardDate: {
+            $gte: new Date(lastOutwardDate + "T00:00:00"),
+            $lte: new Date(lastOutwardDate + "T23:59:59"),
+          },
+        },
+      });
+    }
+
+    /* ================= CLEAN FIELDS ================= */
+
+    pipeline.push({
+      $project: {
+        inwardItems: 0,
+        outwardItems: 0,
+        temple: 0,
+      },
+    });
+
+    /* ================= SORT ================= */
+
+    pipeline.push({
+      $sort: sortField
+        ? { [sortField]: sortOrder === "asc" ? 1 : -1 }
+        : { createdAt: -1 },
+    });
 
     const products = await Product.aggregate(pipeline);
 

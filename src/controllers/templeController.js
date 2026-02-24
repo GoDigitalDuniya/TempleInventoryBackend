@@ -35,7 +35,6 @@ exports.createTemple = async (req, res) => {
 
 
 /* ================= LIST + FULL FILTER SYSTEM ================= */
-
 exports.getTempleList = async (req, res) => {
   try {
     const {
@@ -44,20 +43,14 @@ exports.getTempleList = async (req, res) => {
       templeCode,
       address,
       status,
+      sortField,
+      sortOrder
     } = req.body || {};
 
     const filter = {};
 
-    /* ===== Global Search ===== */
-    if (search) {
-      filter.$or = [
-        { templeName: { $regex: search, $options: "i" } },
-        { templeCode: { $regex: search, $options: "i" } },
-        { address: { $regex: search, $options: "i" } },
-      ];
-    }
+    /* ================= COLUMN FILTERS ================= */
 
-    /* ===== Column Filters ===== */
     if (templeName) {
       filter.templeName = { $regex: templeName, $options: "i" };
     }
@@ -74,8 +67,28 @@ exports.getTempleList = async (req, res) => {
       filter.status = status;
     }
 
-    const temples = await Temple.find(filter)
-      .sort({ createdAt: -1 });
+    /* ================= GLOBAL SEARCH ================= */
+
+    if (search) {
+      filter.$or = [
+        { templeName: { $regex: search, $options: "i" } },
+        { templeCode: { $regex: search, $options: "i" } },
+        { address: { $regex: search, $options: "i" } },
+        { status: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    /* ================= SORT ================= */
+
+    let sortOptions = { createdAt: -1 };
+
+    if (sortField) {
+      sortOptions = {
+        [sortField]: sortOrder === "asc" ? 1 : -1,
+      };
+    }
+
+    const temples = await Temple.find(filter).sort(sortOptions);
 
     return res.json(temples);
 
@@ -83,8 +96,6 @@ exports.getTempleList = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
-
-
 /* ================= UPDATE TEMPLE ================= */
 
 exports.updateTemple = async (req, res) => {
