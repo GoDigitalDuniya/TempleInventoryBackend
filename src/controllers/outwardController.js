@@ -2,6 +2,15 @@ const Outward = require("../models/outward.model");
 const OutwardItem = require("../models/outwardItem.model");
 const Product = require("../models/product.model");
 
+const formatDate = (date) => {
+  if (!date) return null;
+  return new Date(date).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+};
+
 /* ================= CREATE OUTWARD ================= */
 
 exports.createOutward = async (req, res) => {
@@ -15,15 +24,66 @@ exports.createOutward = async (req, res) => {
       items,
     } = req.body;
 
-    if (!items || items.length === 0) {
-      return res.status(400).json({ message: "Items required" });
+    /* ========= PROFESSIONAL VALIDATION ========= */
+
+    if (!customerName || !customerName.trim()) {
+      return res.status(400).json({ message: "Outward name is required" });
     }
+
+    if (!outwardNo || !outwardNo.trim()) {
+      return res.status(400).json({ message: "Outward number is required" });
+    }
+
+    if (!outwardDate) {
+      return res.status(400).json({ message: "Outward date is required" });
+    }
+
+    if (new Date(outwardDate) > new Date()) {
+      return res.status(400).json({
+        message: "Outward date cannot be in future",
+      });
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        message: "At least one outward item is required",
+      });
+    }
+
+    for (const item of items) {
+      if (!item.productId) {
+        return res.status(400).json({
+          message: "Product is required for each item",
+        });
+      }
+
+      if (!item.qty || Number(item.qty) <= 0) {
+        return res.status(400).json({
+          message: "Quantity must be greater than 0",
+        });
+      }
+    }
+
+    /* ========= DUPLICATE OUTWARD NO ========= */
+
+    const exists = await Outward.findOne({
+      outwardNo: outwardNo.trim(),
+      templeId: req.user.templeId,
+    });
+
+    if (exists) {
+      return res.status(400).json({
+        message: "Outward number already exists",
+      });
+    }
+
+    /* ========= CREATE OUTWARD ========= */
 
     const outward = await Outward.create({
       templeId: req.user.templeId,
-      customerName,
+      customerName: customerName.trim(),
       customerMobile,
-      outwardNo,
+      outwardNo: outwardNo.trim(),
       outwardDate,
       description,
       status: "Active",
@@ -35,7 +95,7 @@ exports.createOutward = async (req, res) => {
 
       if (!product || product.currentStock < Number(item.qty)) {
         return res.status(400).json({
-          message: `Insufficient stock for product`,
+          message: "Insufficient stock for one or more products",
         });
       }
 
@@ -46,28 +106,28 @@ exports.createOutward = async (req, res) => {
         qty: item.qty,
       });
 
-      await Product.findByIdAndUpdate(
-        item.productId,
-        { $inc: { currentStock: -Number(item.qty) } }
-      );
+      await Product.findByIdAndUpdate(item.productId, {
+        $inc: { currentStock: -Number(item.qty) },
+      });
     }
 
     return res.status(201).json({
       message: "Outward created successfully",
     });
-
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    return res.status(500).json({
+      message: "Internal Server Error",
+      error: error.message,
+    });
   }
 };
 
-
-/* ================= LIST OUTWARD (WITH FILTER) ================= */
+/* ================= LIST OUTWARD ================= */
 
 exports.getOutwardList = async (req, res) => {
   try {
     const {
-      search,          // ✅ GLOBAL SEARCH
+      search,
       customerName,
       customerMobile,
       outwardNo,
@@ -76,30 +136,20 @@ exports.getOutwardList = async (req, res) => {
       startDate,
       endDate,
       sortField,
-      sortOrder
+      sortOrder,
     } = req.body || {};
 
-    const filter = {
-      templeId: req.user.templeId,
-    };
+    const filter = { templeId: req.user.templeId };
 
-    /* ================= COLUMN FILTERS ================= */
-
-    if (customerName) {
+    if (customerName)
       filter.customerName = { $regex: customerName, $options: "i" };
-    }
 
-    if (customerMobile) {
+    if (customerMobile)
       filter.customerMobile = { $regex: customerMobile, $options: "i" };
-    }
 
-    if (outwardNo) {
-      filter.outwardNo = { $regex: outwardNo, $options: "i" };
-    }
+    if (outwardNo) filter.outwardNo = { $regex: outwardNo, $options: "i" };
 
-    if (status && status !== "All") {
-      filter.status = status;
-    }
+    if (status && status !== "All") filter.status = status;
 
     if (startDate && endDate) {
       filter.outwardDate = {
@@ -107,8 +157,6 @@ exports.getOutwardList = async (req, res) => {
         $lte: new Date(endDate + "T23:59:59"),
       };
     }
-
-    /* ================= GLOBAL SEARCH ================= */
 
     if (search) {
       filter.$or = [
@@ -118,8 +166,6 @@ exports.getOutwardList = async (req, res) => {
         { status: { $regex: search, $options: "i" } },
       ];
     }
-
-    /* ================= SORT ================= */
 
     let sortOptions = { createdAt: -1 };
 
@@ -139,7 +185,6 @@ exports.getOutwardList = async (req, res) => {
           outwardId: outward._id,
         }).populate("productId", "productName");
 
-        // ✅ keep your outwardBy logic EXACT
         if (
           outwardBy &&
           !outward.createdBy?.userName
@@ -149,7 +194,6 @@ exports.getOutwardList = async (req, res) => {
           return null;
         }
 
-        // ✅ apply global search on outwardBy safely
         if (
           search &&
           outward.createdBy?.userName &&
@@ -166,14 +210,14 @@ exports.getOutwardList = async (req, res) => {
 
         return {
           ...outward.toObject(),
+          outwardDate: formatDate(outward.outwardDate),
           outwardBy: outward.createdBy?.userName || "",
           items,
         };
-      })
+      }),
     );
 
     return res.json(result.filter(Boolean));
-
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -183,39 +227,79 @@ exports.getOutwardList = async (req, res) => {
 
 exports.updateOutward = async (req, res) => {
   try {
-    const {
-      outwardId,
-      customerName,
-      customerMobile,
-      description,
-      status,
-    } = req.body;
+    const { outwardId, customerName, customerMobile, description, status } =
+      req.body;
 
-    if (!outwardId) {
-      return res.status(400).json({ message: "Outward ID required" });
-    }
+    if (!outwardId)
+      return res.status(400).json({ message: "Outward ID is required" });
 
+    if (!customerName?.trim())
+      return res.status(400).json({ message: "Customer name is required" });
     const outward = await Outward.findOneAndUpdate(
       { _id: outwardId, templeId: req.user.templeId },
       {
-        customerName,
+        customerName: customerName.trim(),
         customerMobile,
         description,
         status,
       },
-      { new: true }
+      { returnDocument: "after" },
     );
 
-    if (!outward) {
-      return res.status(404).json({ message: "Outward not found" });
-    }
+    if (!outward) return res.status(404).json({ message: "Outward not found" });
 
     return res.json({
       message: "Outward updated successfully",
       outward,
     });
-
   } catch (error) {
     return res.status(500).json({ message: error.message });
+  }
+};
+
+/* ================= DELETE OUTWARD ================= */
+
+exports.deleteOutward = async (req, res) => {
+  try {
+    const { outwardId } = req.body;
+
+    if (!outwardId) {
+      return res.status(400).json({ message: "Outward ID is required" });
+    }
+
+    // 🔍 Temple-safe fetch
+    const outward = await Outward.findOne({
+      _id: outwardId,
+      templeId: req.user.templeId,
+    });
+
+    if (!outward) {
+      return res.status(404).json({ message: "Outward not found" });
+    }
+
+    // 📦 Get outward items
+    const items = await OutwardItem.find({ outwardId });
+
+    // 🔺 Restore stock
+    for (const item of items) {
+      await Product.findByIdAndUpdate(item.productId, {
+        $inc: { currentStock: Number(item.qty) },
+      });
+    }
+
+    // 🗑 Delete items
+    await OutwardItem.deleteMany({ outwardId });
+
+    // 🗑 Delete outward
+    await Outward.deleteOne({ _id: outwardId });
+
+    return res.json({
+      message: "Outward deleted successfully",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Internal Server Error",
+      error: error.message,
+    });
   }
 };

@@ -1,5 +1,16 @@
 const Temple = require("../models/temple.model");
 
+/* ================= DATE FORMATTER ================= */
+
+const formatDate = (date) => {
+  if (!date) return null;
+  return new Date(date).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+};
+
 /* ================= CREATE TEMPLE ================= */
 
 exports.createTemple = async (req, res) => {
@@ -10,16 +21,57 @@ exports.createTemple = async (req, res) => {
       });
     }
 
-    const { templeName, templeCode } = req.body;
+    const { templeName, templeCode, status, address } = req.body;
 
-    if (!templeName || !templeCode) {
+    /* ========= PROFESSIONAL VALIDATION ========= */
+
+    if (!templeName || !templeName.trim()) {
       return res.status(400).json({
-        message: "Temple name and code required",
+        message: "Temple name is required",
       });
     }
 
+    if (!templeCode || !templeCode.trim()) {
+      return res.status(400).json({
+        message: "Temple code is required",
+      });
+    }
+
+    if (status && !["Active", "Inactive"].includes(status)) {
+      return res.status(400).json({
+        message: "Invalid temple status",
+      });
+    }
+
+    /* ========= DUPLICATE CHECK ========= */
+
+    const nameExists = await Temple.findOne({
+      templeName: templeName.trim(),
+    });
+
+    if (nameExists) {
+      return res.status(400).json({
+        message: "Temple name already exists",
+      });
+    }
+
+    const codeExists = await Temple.findOne({
+      templeCode: templeCode.trim(),
+    });
+
+    if (codeExists) {
+      return res.status(400).json({
+        message: "Temple code already exists",
+      });
+    }
+
+    /* ========= CREATE TEMPLE ========= */
+
     const temple = await Temple.create({
-      ...req.body,
+      templeName: templeName.trim(),
+      templeCode: templeCode.trim(),
+      address,
+      status: status || "Active",
       createdBy: req.user._id,
     });
 
@@ -29,12 +81,16 @@ exports.createTemple = async (req, res) => {
     });
 
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    return res.status(500).json({
+      message: "Internal Server Error",
+      error: error.message,
+    });
   }
 };
 
 
 /* ================= LIST + FULL FILTER SYSTEM ================= */
+
 exports.getTempleList = async (req, res) => {
   try {
     const {
@@ -48,6 +104,14 @@ exports.getTempleList = async (req, res) => {
     } = req.body || {};
 
     const filter = {};
+
+    /* ========= VALIDATION ========= */
+
+    if (status && status !== "All" && !["Active", "Inactive"].includes(status)) {
+      return res.status(400).json({
+        message: "Invalid status filter",
+      });
+    }
 
     /* ================= COLUMN FILTERS ================= */
 
@@ -90,12 +154,22 @@ exports.getTempleList = async (req, res) => {
 
     const temples = await Temple.find(filter).sort(sortOptions);
 
-    return res.json(temples);
+    /* ================= FORMAT DATES ================= */
+
+    const formattedTemples = temples.map(t => ({
+      ...t.toObject(),
+      createdAt: formatDate(t.createdAt),
+      updatedAt: formatDate(t.updatedAt),
+    }));
+
+    return res.json(formattedTemples);
 
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
+
+
 /* ================= UPDATE TEMPLE ================= */
 
 exports.updateTemple = async (req, res) => {
@@ -109,7 +183,30 @@ exports.updateTemple = async (req, res) => {
     const { id, ...updateData } = req.body || {};
 
     if (!id) {
-      return res.status(400).json({ message: "Temple ID required" });
+      return res.status(400).json({
+        message: "Temple ID is required",
+      });
+    }
+
+    if (updateData.templeName !== undefined && !updateData.templeName.trim()) {
+      return res.status(400).json({
+        message: "Temple name cannot be empty",
+      });
+    }
+
+    if (updateData.templeCode !== undefined && !updateData.templeCode.trim()) {
+      return res.status(400).json({
+        message: "Temple code cannot be empty",
+      });
+    }
+
+    if (
+      updateData.status &&
+      !["Active", "Inactive"].includes(updateData.status)
+    ) {
+      return res.status(400).json({
+        message: "Invalid temple status",
+      });
     }
 
     const temple = await Temple.findByIdAndUpdate(
@@ -119,7 +216,9 @@ exports.updateTemple = async (req, res) => {
     );
 
     if (!temple) {
-      return res.status(404).json({ message: "Temple not found" });
+      return res.status(404).json({
+        message: "Temple not found",
+      });
     }
 
     return res.json({

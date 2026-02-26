@@ -1,30 +1,91 @@
 const Product = require("../models/product.model");
 
+/* ================= DATE FORMATTER ================= */
+
+const formatDate = (date) => {
+  if (!date) return null;
+  return new Date(date).toLocaleDateString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+};
+
+/* =====================================================
+   ✅ CATEGORY DROPDOWN API (DYNAMIC FROM DB)
+===================================================== */
+
+exports.getCategoryList = async (req, res) => {
+  try {
+    const categories = await Product.distinct("category", {
+      templeId: req.user.templeId,
+      category: { $ne: null },
+    });
+
+    return res.json(categories.filter((c) => c && c.trim()).sort());
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
 /* ================= CREATE PRODUCT ================= */
 
 exports.createProduct = async (req, res) => {
   try {
-    const { productName } = req.body;
+    const { productName, category, minQty, currentStock, status } = req.body;
 
-    if (!productName) {
-      return res.status(400).json({ message: "Product name required" });
+    if (!productName || !productName.trim()) {
+      return res.status(400).json({ message: "Product name is required" });
+    }
+
+    if (!category || !category.trim()) {
+      return res.status(400).json({ message: "Category is required" });
+    }
+
+    if (minQty !== undefined && Number(minQty) < 0) {
+      return res
+        .status(400)
+        .json({ message: "Minimum quantity cannot be negative" });
+    }
+
+    if (currentStock !== undefined && Number(currentStock) < 0) {
+      return res
+        .status(400)
+        .json({ message: "Current stock cannot be negative" });
+    }
+
+    if (status && !["Active", "Inactive"].includes(status)) {
+      return res.status(400).json({ message: "Invalid product status" });
+    }
+
+    const exists = await Product.findOne({
+      productName: productName.trim(),
+      templeId: req.user.templeId,
+    });
+
+    if (exists) {
+      return res.status(400).json({ message: "Product already exists" });
     }
 
     const product = await Product.create({
       ...req.body,
+      productName: productName.trim(),
+      category: category.trim(),
       templeId: req.user.templeId,
-      currentStock: req.body.currentStock || 0,
+      currentStock: currentStock || 0,
     });
 
     return res.status(201).json({
       message: "Product created successfully",
       product,
     });
-
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
+
+/* ================= LIST PRODUCTS ================= */
 
 exports.listProducts = async (req, res) => {
   try {
@@ -35,11 +96,10 @@ exports.listProducts = async (req, res) => {
       category,
       minQty,
       currentStock,
-      templeName,
       lastInwardDate,
       lastOutwardDate,
       sortField,
-      sortOrder
+      sortOrder,
     } = req.body || {};
 
     const matchStage = {
@@ -48,27 +108,23 @@ exports.listProducts = async (req, res) => {
 
     /* ================= COLUMN FILTERS ================= */
 
-    if (status && status !== "All") {
-      matchStage.status = status;
-    }
+    if (status && status !== "All") matchStage.status = status;
 
     if (productName) {
       matchStage.productName = { $regex: productName, $options: "i" };
     }
 
-    if (category) {
-      matchStage.category = { $regex: category, $options: "i" };
+    /* ✅ SMART CATEGORY FILTER */
+    if (category && category !== "All") {
+      matchStage.category = {
+        $regex: `^${category.trim()}$`,
+        $options: "i",
+      };
     }
 
-    if (minQty) {
-      matchStage.minQuantity = Number(minQty);
-    }
-
-    if (currentStock) {
+    if (minQty !== undefined) matchStage.minQty = Number(minQty);
+    if (currentStock !== undefined)
       matchStage.currentStock = Number(currentStock);
-    }
-
-    /* ================= BASE PIPELINE ================= */
 
     const pipeline = [
       { $match: matchStage },
@@ -109,7 +165,7 @@ exports.listProducts = async (req, res) => {
       },
     ];
 
-    /* ================= GLOBAL SEARCH (AFTER LOOKUPS) ================= */
+    /* ================= GLOBAL SEARCH ================= */
 
     if (search) {
       pipeline.push({
@@ -123,8 +179,6 @@ exports.listProducts = async (req, res) => {
         },
       });
     }
-
-    /* ================= DATE FILTERS ================= */
 
     if (lastInwardDate) {
       pipeline.push({
@@ -148,8 +202,6 @@ exports.listProducts = async (req, res) => {
       });
     }
 
-    /* ================= CLEAN FIELDS ================= */
-
     pipeline.push({
       $project: {
         inwardItems: 0,
@@ -157,8 +209,6 @@ exports.listProducts = async (req, res) => {
         temple: 0,
       },
     });
-
-    /* ================= SORT ================= */
 
     pipeline.push({
       $sort: sortField
@@ -168,13 +218,17 @@ exports.listProducts = async (req, res) => {
 
     const products = await Product.aggregate(pipeline);
 
-    return res.json(products);
+    const formattedProducts = products.map((p) => ({
+      ...p,
+      lastInwardDate: formatDate(p.lastInwardDate),
+      lastOutwardDate: formatDate(p.lastOutwardDate),
+    }));
 
+    return res.json(formattedProducts);
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
-
 
 /* ================= UPDATE PRODUCT ================= */
 
@@ -183,13 +237,46 @@ exports.updateProduct = async (req, res) => {
     const { id, ...updateData } = req.body || {};
 
     if (!id) {
-      return res.status(400).json({ message: "Product ID required" });
+      return res.status(400).json({ message: "Product ID is required" });
+    }
+
+    if (
+      updateData.productName !== undefined &&
+      !updateData.productName.trim()
+    ) {
+      return res.status(400).json({ message: "Product name cannot be empty" });
+    }
+
+    if (updateData.category !== undefined && !updateData.category.trim()) {
+      return res.status(400).json({ message: "Category cannot be empty" });
+    }
+
+    if (updateData.minQty !== undefined && Number(updateData.minQty) < 0) {
+      return res
+        .status(400)
+        .json({ message: "Minimum quantity cannot be negative" });
+    }
+
+    if (
+      updateData.currentStock !== undefined &&
+      Number(updateData.currentStock) < 0
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Current stock cannot be negative" });
+    }
+
+    if (
+      updateData.status &&
+      !["Active", "Inactive"].includes(updateData.status)
+    ) {
+      return res.status(400).json({ message: "Invalid product status" });
     }
 
     const product = await Product.findOneAndUpdate(
       { _id: id, templeId: req.user.templeId },
       updateData,
-      { new: true }
+      { returnDocument: "after" },
     );
 
     if (!product) {
@@ -200,7 +287,6 @@ exports.updateProduct = async (req, res) => {
       message: "Product updated successfully",
       product,
     });
-
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }

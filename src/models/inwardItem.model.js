@@ -22,7 +22,7 @@ const inwardItemSchema = new mongoose.Schema({
 
   batchNo: String,
 
-  expDate: Date
+  expDate: String,
 
 }, { timestamps: true });
 

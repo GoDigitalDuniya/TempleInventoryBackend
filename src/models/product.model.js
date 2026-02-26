@@ -33,7 +33,7 @@ const productSchema = new mongoose.Schema(
       default: 0,
     },
 
-    warehouseReck: {
+    warehouseReck: {   // keeping your original naming
       type: String,
       required: true,
     },
@@ -43,7 +43,7 @@ const productSchema = new mongoose.Schema(
       default: "Active",
     },
   },
-  { timestamps: true },
+  { timestamps: true }
 );
 
 module.exports = mongoose.model("Product", productSchema);

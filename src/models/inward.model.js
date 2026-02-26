@@ -10,30 +10,35 @@ const inwardSchema = new mongoose.Schema(
 
     vendorName: {
       type: String,
-      required: true,
+      required: [true, "Vendor name is required"],
+      trim: true,
     },
 
     vendorMobile: {
       type: String,
-      required: true,
     },
 
     vendorAddress: {
       type: String,
-      required: true,
+      required: [true, "Vendor address is required"],
+      trim: true,
     },
 
     challanNo: {
       type: String,
-      required: true,
+      required: [true, "Challan number is required"],
+      trim: true,
     },
 
     inwardDate: {
       type: Date,
-      required: true,
+      required: [true, "Inward date is required"],
     },
 
-    description: String,
+    description: {
+      type: String,
+      trim: true,
+    },
 
     status: {
       type: String,
