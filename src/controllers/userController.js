@@ -4,6 +4,7 @@ const User = require("../models/user.model");
 
 const formatDate = (date) => {
   if (!date) return null;
+
   return new Date(date).toLocaleDateString("en-GB", {
     day: "2-digit",
     month: "short",
@@ -32,45 +33,29 @@ exports.createUser = async (req, res) => {
       status,
     } = req.body;
 
-    /* ========= PROFESSIONAL VALIDATION ========= */
-
-    if (!userId || !userId.trim()) {
+    if (!userId?.trim())
       return res.status(400).json({ message: "User ID is required" });
-    }
 
-    if (!templeId) {
+    if (!templeId)
       return res.status(400).json({ message: "Temple ID is required" });
-    }
 
-    if (!role) {
+    if (!role)
       return res.status(400).json({ message: "User role is required" });
-    }
 
-    if (!userName || !userName.trim()) {
+    if (!userName?.trim())
       return res.status(400).json({ message: "User name is required" });
-    }
 
-    if (!mobile || !mobile.trim()) {
+    if (!mobile?.trim())
       return res.status(400).json({ message: "Mobile number is required" });
-    }
 
-    if (!loginId || !loginId.trim()) {
+    if (!loginId?.trim())
       return res.status(400).json({ message: "Login ID is required" });
-    }
 
     if (!password || password.length < 6) {
       return res.status(400).json({
-        message: "Password must be at least 6 characters long",
+        message: "Password must be at least 6 characters",
       });
     }
-
-    if (status && !["Active", "Inactive"].includes(status)) {
-      return res.status(400).json({
-        message: "Invalid user status",
-      });
-    }
-
-    /* ========= DUPLICATE LOGIN CHECK ========= */
 
     const existingUser = await User.findOne({
       loginId: loginId.trim(),
@@ -81,8 +66,6 @@ exports.createUser = async (req, res) => {
         message: "Login ID already exists",
       });
     }
-
-    /* ========= CREATE USER ========= */
 
     const user = await User.create({
       userId: userId.trim(),
@@ -99,10 +82,10 @@ exports.createUser = async (req, res) => {
       message: "User created successfully",
       user,
     });
+
   } catch (error) {
     return res.status(500).json({
-      message: "Internal Server Error",
-      error: error.message,
+      message: error.message,
     });
   }
 };
@@ -111,6 +94,7 @@ exports.createUser = async (req, res) => {
 
 exports.listUsers = async (req, res) => {
   try {
+
     const {
       search,
       role,
@@ -118,24 +102,13 @@ exports.listUsers = async (req, res) => {
       userName,
       loginId,
       mobile,
+      templeName,
       templeId,
       sortField,
       sortOrder,
     } = req.body || {};
 
     const filter = {};
-
-    /* ========= VALIDATION ========= */
-
-    if (
-      status &&
-      status !== "All" &&
-      !["Active", "Inactive"].includes(status)
-    ) {
-      return res.status(400).json({
-        message: "Invalid status filter",
-      });
-    }
 
     /* ================= TEMPLE SECURITY ================= */
 
@@ -145,13 +118,27 @@ exports.listUsers = async (req, res) => {
       filter.templeId = req.user.templeId;
     }
 
-    /* ================= COLUMN FILTERS ================= */
+    /* ================= FILTERS ================= */
 
-    if (role && role !== "Role") filter.role = role;
-    if (status && status !== "All") filter.status = status;
-    if (userName) filter.userName = { $regex: userName, $options: "i" };
-    if (loginId) filter.loginId = { $regex: loginId, $options: "i" };
-    if (mobile) filter.mobile = { $regex: mobile, $options: "i" };
+    if (role && role !== "Role") {
+      filter.role = { $regex: role, $options: "i" };
+    }
+
+    if (status && status !== "All") {
+      filter.status = status;
+    }
+
+    if (userName) {
+      filter.userName = { $regex: userName, $options: "i" };
+    }
+
+    if (loginId) {
+      filter.loginId = { $regex: loginId, $options: "i" };
+    }
+
+    if (mobile) {
+      filter.mobile = { $regex: mobile, $options: "i" };
+    }
 
     /* ================= GLOBAL SEARCH ================= */
 
@@ -165,26 +152,38 @@ exports.listUsers = async (req, res) => {
       ];
     }
 
-    /* ================= SORT ================= */
+    /* ================= QUERY ================= */
 
-    let sortOptions = { createdAt: -1 };
-    if (sortField) {
-      sortOptions = {
-        [sortField]: sortOrder === "asc" ? 1 : -1,
-      };
+    const users = await User.find(filter)
+      .populate("templeId", "templeName")
+      .sort(sortField ? { [sortField]: sortOrder === "asc" ? 1 : -1 } : { createdAt: -1 })
+      .lean();
+
+    /* ================= TEMPLE FILTER ================= */
+
+    let result = users;
+
+    if (templeName) {
+      result = users.filter((u) =>
+        u.templeId?.templeName?.toLowerCase().includes(templeName.toLowerCase())
+      );
     }
 
-    const users = await User.find(filter).sort(sortOptions);
+    /* ================= FORMAT ================= */
 
-    const formattedUsers = users.map((u) => ({
-      ...u.toObject(),
+    const formattedUsers = result.map((u) => ({
+      ...u,
+      templeName: u.templeId ? u.templeId.templeName : "---",
       createdAt: formatDate(u.createdAt),
       updatedAt: formatDate(u.updatedAt),
     }));
 
     return res.json(formattedUsers);
+
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    return res.status(500).json({
+      message: error.message,
+    });
   }
 };
 
@@ -192,32 +191,12 @@ exports.listUsers = async (req, res) => {
 
 exports.updateUser = async (req, res) => {
   try {
+
     const { id, ...updateData } = req.body || {};
 
     if (!id) {
       return res.status(400).json({
         message: "User ID is required",
-      });
-    }
-
-    if (updateData.userName !== undefined && !updateData.userName.trim()) {
-      return res.status(400).json({
-        message: "User name cannot be empty",
-      });
-    }
-
-    if (updateData.mobile !== undefined && !updateData.mobile.trim()) {
-      return res.status(400).json({
-        message: "Mobile number cannot be empty",
-      });
-    }
-
-    if (
-      updateData.status &&
-      !["Active", "Inactive"].includes(updateData.status)
-    ) {
-      return res.status(400).json({
-        message: "Invalid user status",
       });
     }
 
@@ -241,7 +220,10 @@ exports.updateUser = async (req, res) => {
       message: "User updated successfully",
       user,
     });
+
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    return res.status(500).json({
+      message: error.message,
+    });
   }
 };

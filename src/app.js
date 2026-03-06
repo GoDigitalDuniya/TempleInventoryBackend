@@ -8,16 +8,19 @@ const productRoutes = require("./routes/productRoutes");
 const inwardRoutes = require("./routes/inwardRoutes");
 const outwardRoutes = require("./routes/outwardRoutes");
 const userRoutes = require("./routes/userRoutes");
+const stockRoutes = require("./routes/stockRoutes");
 
 
 const app = express();
 
 /* ========== MIDDLEWARE ========== */
 
-app.use(cors({
-  origin: "http://localhost:5173",
-  credentials: true
-}));
+app.use(
+  cors({
+    origin: "*",
+    credentials: true,
+  }),
+);
 
 app.use(express.json());
 app.use(cookieParser());
@@ -30,6 +33,7 @@ app.use("/api/temples", templeRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/inward", inwardRoutes);
 app.use("/api/outward", outwardRoutes);
+app.use("/api/stock", stockRoutes);
 
 /* ========== TEST ROUTE ========== */
 

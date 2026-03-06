@@ -8,13 +8,13 @@ const outwardSchema = new mongoose.Schema(
       required: true,
     },
 
-    customerName: {
+    outwardName: {
       type: String,
-      required: [true, "Customer name is required"],
+      required: [true, "outward name is required"],
       trim: true,
     },
 
-    customerMobile: {
+    outwardMobile: {
       type: String, // ✅ optional only (no validation)
     },
 

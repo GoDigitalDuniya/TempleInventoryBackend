@@ -212,7 +212,7 @@ exports.updateTemple = async (req, res) => {
     const temple = await Temple.findByIdAndUpdate(
       id,
       updateData,
-      { new: true }
+      { returnDocument: "after" }
     );
 
     if (!temple) {
