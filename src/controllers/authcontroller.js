@@ -25,7 +25,10 @@ exports.loginUser = async (req, res) => {
       { expiresIn: "1d" }
     );
 
+    // Update database with the latest token to invalidate previous sessions
+    user.token = token;
     user.lastLogin = new Date();
+
     await user.save();
 
     res.json({
@@ -38,7 +41,19 @@ exports.loginUser = async (req, res) => {
         templeId: user.templeId
       }
     });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
 
+exports.logoutUser = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (user) {
+      user.token = null;
+      await user.save();
+    }
+    res.json({ message: "Logout successful" });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

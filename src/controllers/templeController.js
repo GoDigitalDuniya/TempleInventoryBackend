@@ -1,16 +1,21 @@
 const Temple = require("../models/temple.model");
 
 /* ================= DATE FORMATTER ================= */
-
 const formatDate = (date) => {
   if (!date) return null;
-  return new Date(date).toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-};
 
+  return new Date(date)
+    .toLocaleString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: "Asia/Kolkata",
+    })
+    .replace(",", "");
+};
 /* ================= CREATE TEMPLE ================= */
 
 exports.createTemple = async (req, res) => {
@@ -37,7 +42,7 @@ exports.createTemple = async (req, res) => {
       });
     }
 
-    if (status && !["Active", "Inactive"].includes(status)) {
+    if (status && !["Active", "Deactive"].includes(status)) {
       return res.status(400).json({
         message: "Invalid temple status",
       });
@@ -107,7 +112,7 @@ exports.getTempleList = async (req, res) => {
 
     /* ========= VALIDATION ========= */
 
-    if (status && status !== "All" && !["Active", "Inactive"].includes(status)) {
+    if (status && status !== "All" && !["Active", "Deactive"].includes(status)) {
       return res.status(400).json({
         message: "Invalid status filter",
       });
@@ -142,21 +147,37 @@ exports.getTempleList = async (req, res) => {
       ];
     }
 
+    const temples = await Temple.find(filter);
+
     /* ================= SORT ================= */
 
-    let sortOptions = { createdAt: -1 };
+    let sortedTemples = temples;
 
     if (sortField) {
-      sortOptions = {
-        [sortField]: sortOrder === "asc" ? 1 : -1,
-      };
-    }
+      const order = sortOrder === "asc" ? 1 : -1;
 
-    const temples = await Temple.find(filter).sort(sortOptions);
+      sortedTemples = temples.sort((a, b) => {
+        let valA = a[sortField];
+        let valB = b[sortField];
+
+        if (valA === undefined || valA === null) valA = "";
+        if (valB === undefined || valB === null) valB = "";
+
+        if (typeof valA === "string") valA = valA.toLowerCase();
+        if (typeof valB === "string") valB = valB.toLowerCase();
+
+        if (valA > valB) return order;
+        if (valA < valB) return -order;
+        return 0;
+      });
+
+    } else {
+      sortedTemples = temples.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    }
 
     /* ================= FORMAT DATES ================= */
 
-    const formattedTemples = temples.map(t => ({
+    const formattedTemples = sortedTemples.map(t => ({
       ...t.toObject(),
       createdAt: formatDate(t.createdAt),
       updatedAt: formatDate(t.updatedAt),
@@ -171,7 +192,6 @@ exports.getTempleList = async (req, res) => {
 
 
 /* ================= UPDATE TEMPLE ================= */
-
 exports.updateTemple = async (req, res) => {
   try {
     if (req.user.role !== "Admin") {
@@ -202,7 +222,7 @@ exports.updateTemple = async (req, res) => {
 
     if (
       updateData.status &&
-      !["Active", "Inactive"].includes(updateData.status)
+      !["Active", "Deactive"].includes(updateData.status)
     ) {
       return res.status(400).json({
         message: "Invalid temple status",
@@ -227,6 +247,18 @@ exports.updateTemple = async (req, res) => {
     });
 
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+
+    // ⭐ Handle duplicate key error
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyValue)[0];
+
+      return res.status(400).json({
+        message: `${field} already exists`,
+      });
+    }
+
+    return res.status(500).json({
+      message: "Something went wrong",
+    });
   }
 };

@@ -1,16 +1,21 @@
 const Outward = require("../models/outward.model");
 const OutwardItem = require("../models/outwardItem.model");
 const Product = require("../models/product.model");
-
 const formatDate = (date) => {
   if (!date) return null;
-  return new Date(date).toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-};
 
+  return new Date(date)
+    .toLocaleString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: "Asia/Kolkata",
+    })
+    .replace(",", "");
+};
 /* ================= CREATE OUTWARD ================= */
 
 exports.createOutward = async (req, res) => {
@@ -145,43 +150,150 @@ exports.getOutwardList = async (req, res) => {
       sortOrder,
     } = req.body || {};
 
-    const filter = { templeId: req.user.templeId };
+    const match = {
+      templeId: req.user.templeId,
+    };
 
-    if (outwardName)
-      filter.outwardName = { $regex: outwardName, $options: "i" };
+    /* ===== COLUMN FILTER ===== */
+
+    if (outwardName) match.outwardName = { $regex: outwardName, $options: "i" };
 
     if (outwardMobile)
-      filter.outwardMobile = { $regex: outwardMobile, $options: "i" };
+      match.outwardMobile = { $regex: outwardMobile, $options: "i" };
 
-    if (outwardNo) filter.outwardNo = { $regex: outwardNo, $options: "i" };
+    if (outwardNo) match.outwardNo = { $regex: outwardNo, $options: "i" };
 
-    if (status && status !== "All") filter.status = status;
+    if (status && status !== "All") match.status = status;
 
-    if (startDate && endDate)
-      filter.outwardDate = {
+    /* ===== DATE RANGE FILTER ===== */
+
+    if (startDate && endDate) {
+      match.outwardDate = {
         $gte: new Date(startDate + "T00:00:00"),
         $lte: new Date(endDate + "T23:59:59"),
       };
-
-    if (search) {
-      filter.$or = [
-        { outwardName: { $regex: search, $options: "i" } },
-        { outwardMobile: { $regex: search, $options: "i" } },
-        { outwardNo: { $regex: search, $options: "i" } },
-        { status: { $regex: search, $options: "i" } },
-      ];
     }
 
-    let sortOptions = { createdAt: -1 };
+    let pipeline = [
+      { $match: match },
 
-    if (sortField)
-      sortOptions = {
-        [sortField]: sortOrder === "asc" ? 1 : -1,
+      /* ===== JOIN USER ===== */
+
+      {
+        $lookup: {
+          from: "users",
+          localField: "createdBy",
+          foreignField: "_id",
+          as: "createdByUser",
+        },
+      },
+
+      {
+        $unwind: {
+          path: "$createdByUser",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+
+      /* ===== ADD COMPUTED FIELDS ===== */
+
+      {
+        $addFields: {
+          outwardBy: "$createdByUser.userName",
+
+          outwardDateString: {
+            $dateToString: {
+              format: "%d %b %Y",
+              date: "$outwardDate",
+            },
+          },
+
+          createdDateString: {
+            $dateToString: {
+              format: "%d %b %Y",
+              date: "$createdAt",
+            },
+          },
+
+          /* lowercase fields for ABC sorting */
+
+          outwardNameLower: { $toLower: "$outwardName" },
+          outwardMobileLower: { $toLower: "$outwardMobile" },
+          outwardNoLower: { $toLower: "$outwardNo" },
+          outwardByLower: { $toLower: "$createdByUser.userName" },
+          statusLower: { $toLower: "$status" },
+        },
+      },
+    ];
+
+    /* ===== COLUMN SEARCH FOR OUTWARD BY ===== */
+
+    if (outwardBy) {
+      pipeline.push({
+        $match: {
+          outwardBy: { $regex: outwardBy, $options: "i" },
+        },
+      });
+    }
+
+    /* ===== GLOBAL SEARCH ===== */
+
+    if (search) {
+      pipeline.push({
+        $match: {
+          $or: [
+            { outwardName: { $regex: search, $options: "i" } },
+            { outwardMobile: { $regex: search, $options: "i" } },
+            { outwardNo: { $regex: search, $options: "i" } },
+            { status: { $regex: search, $options: "i" } },
+            { outwardBy: { $regex: search, $options: "i" } },
+            { outwardDateString: { $regex: search, $options: "i" } },
+            { createdDateString: { $regex: search, $options: "i" } },
+          ],
+        },
+      });
+    }
+
+    /* ===== SORT ===== */
+
+    let sort = { createdAt: -1 };
+
+    if (sortField) {
+      const order = sortOrder === "asc" ? 1 : -1;
+
+      const sortFields = {
+        outwardName: "outwardNameLower",
+        outwardMobile: "outwardMobileLower",
+        outwardNo: "outwardNoLower",
+        outwardBy: "outwardByLower",
+        status: "statusLower",
       };
 
-    const outwards = await Outward.find(filter)
-      .populate("createdBy", "userName")
-      .sort(sortOptions);
+      if (sortFields[sortField]) {
+        sort = { [sortFields[sortField]]: order };
+      } else {
+        sort = { [sortField]: order };
+      }
+    }
+
+    pipeline.push({ $sort: sort });
+
+    /* ===== REMOVE TEMP FIELDS ===== */
+
+    pipeline.push({
+      $project: {
+        createdByUser: 0,
+        outwardNameLower: 0,
+        outwardMobileLower: 0,
+        outwardNoLower: 0,
+        outwardByLower: 0,
+        statusLower: 0,
+      },
+    });
+
+    /* ===== EXECUTE PIPELINE ===== */
+
+    const outwards = await Outward.aggregate(pipeline);
 
     const result = await Promise.all(
       outwards.map(async (outward) => {
@@ -190,9 +302,9 @@ exports.getOutwardList = async (req, res) => {
         }).populate("productId", "productName");
 
         return {
-          ...outward.toObject(),
+          ...outward,
           outwardDate: formatDate(outward.outwardDate),
-          outwardBy: outward.createdBy?.userName || "",
+          createdAt: formatDate(outward.createdAt),
           items,
         };
       }),
@@ -200,20 +312,19 @@ exports.getOutwardList = async (req, res) => {
 
     return res.json(result);
   } catch (error) {
+    console.log(error);
+
     return res.status(500).json({
-      message: error.message,
+      message: "Internal Server Error",
     });
   }
 };
 
 /* ================= UPDATE OUTWARD ================= */
 
-/* =====================================================
-   ✅ UPDATE OUTWARD
-===================================================== */
-
 exports.updateOutward = async (req, res) => {
   try {
+
     const {
       outwardId,
       outwardName,
@@ -227,18 +338,28 @@ exports.updateOutward = async (req, res) => {
 
     /* ================= VALIDATION ================= */
 
-    if (!outwardId)
-      return res.status(400).json({ message: "Outward ID required" });
+    if (!outwardId) {
+      return res.status(400).json({
+        message: "Outward ID required",
+      });
+    }
 
-    if (!Array.isArray(items) || items.length === 0)
-      return res.status(400).json({ message: "Items required" });
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        message: "Items required",
+      });
+    }
 
     const outward = await Outward.findOne({
       _id: outwardId,
       templeId: req.user.templeId,
     });
 
-    if (!outward) return res.status(404).json({ message: "Outward not found" });
+    if (!outward) {
+      return res.status(404).json({
+        message: "Outward not found",
+      });
+    }
 
     /* ================= RESTORE OLD STOCK ================= */
 
@@ -253,6 +374,7 @@ exports.updateOutward = async (req, res) => {
     /* ================= STOCK CHECK ================= */
 
     for (const item of items) {
+
       const product = await Product.findById(item.productId);
 
       if (!product) {
@@ -262,7 +384,9 @@ exports.updateOutward = async (req, res) => {
       }
 
       if (product.currentStock < Number(item.qty)) {
+
         /* rollback restored stock */
+
         for (const old of oldItems) {
           await Product.findByIdAndUpdate(old.productId, {
             $inc: { currentStock: -Number(old.qty) },
@@ -281,7 +405,10 @@ exports.updateOutward = async (req, res) => {
     /* ================= UPDATE OUTWARD ================= */
 
     await Outward.findOneAndUpdate(
-      { _id: outwardId },
+      {
+        _id: outwardId,
+        templeId: req.user.templeId,
+      },
       {
         outwardName,
         outwardMobile,
@@ -291,8 +418,8 @@ exports.updateOutward = async (req, res) => {
         status,
       },
       {
-        returnDocument: "after", // ✅ mongoose warning fixed
-      },
+        returnDocument: "after",
+      }
     );
 
     /* ================= DELETE OLD ITEMS ================= */
@@ -302,6 +429,7 @@ exports.updateOutward = async (req, res) => {
     /* ================= CREATE NEW ITEMS ================= */
 
     for (const item of items) {
+
       await OutwardItem.create({
         outwardId,
         productId: item.productId,
@@ -319,11 +447,27 @@ exports.updateOutward = async (req, res) => {
     return res.json({
       message: "Outward updated successfully",
     });
+
   } catch (error) {
-    console.log(error);
+
+    /* Duplicate key error */
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyValue)[0];
+
+      return res.status(400).json({
+        message: `${field} already exists`,
+      });
+    }
+
+    /* Invalid ObjectId */
+    if (error.name === "CastError") {
+      return res.status(400).json({
+        message: "Invalid ID format",
+      });
+    }
 
     return res.status(500).json({
-      message: "Internal Server Error",
+      message: "Something went wrong",
     });
   }
 };

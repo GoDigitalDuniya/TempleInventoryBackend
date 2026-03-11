@@ -4,16 +4,22 @@ const Product = require("../models/product.model");
 
 const formatDate = (date) => {
   if (!date) return null;
-  return new Date(date).toLocaleDateString("en-IN", {
-    timeZone: "Asia/Kolkata",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
+
+  return new Date(date)
+    .toLocaleString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: "Asia/Kolkata",
+    })
+    .replace(",", "");
 };
 
 /* =====================================================
-   ✅ CATEGORY DROPDOWN API (DYNAMIC FROM DB)
+   CATEGORY DROPDOWN
 ===================================================== */
 
 exports.getCategoryList = async (req, res) => {
@@ -41,22 +47,6 @@ exports.createProduct = async (req, res) => {
 
     if (!category || !category.trim()) {
       return res.status(400).json({ message: "Category is required" });
-    }
-
-    if (minQty !== undefined && Number(minQty) < 0) {
-      return res
-        .status(400)
-        .json({ message: "Minimum quantity cannot be negative" });
-    }
-
-    if (currentStock !== undefined && Number(currentStock) < 0) {
-      return res
-        .status(400)
-        .json({ message: "Current stock cannot be negative" });
-    }
-
-    if (status && !["Active", "Inactive"].includes(status)) {
-      return res.status(400).json({ message: "Invalid product status" });
     }
 
     const exists = await Product.findOne({
@@ -87,6 +77,7 @@ exports.createProduct = async (req, res) => {
 
 /* ================= LIST PRODUCTS ================= */
 
+
 exports.listProducts = async (req, res) => {
   try {
     const {
@@ -94,10 +85,13 @@ exports.listProducts = async (req, res) => {
       status,
       productName,
       category,
+      warehouseReck,
       minQty,
       currentStock,
-      lastInwardDate,
-      lastOutwardDate,
+      startInwardDate,
+      endInwardDate,
+      startOutwardDate,
+      endOutwardDate,
       sortField,
       sortOrder,
     } = req.body || {};
@@ -106,28 +100,29 @@ exports.listProducts = async (req, res) => {
       templeId: req.user.templeId,
     };
 
-    /* ================= COLUMN FILTERS ================= */
+    /* ===== COLUMN FILTERS ===== */
 
     if (status && status !== "All") matchStage.status = status;
 
-    if (productName) {
+    if (productName)
       matchStage.productName = { $regex: productName, $options: "i" };
-    }
 
-    /* ✅ SMART CATEGORY FILTER */
-    if (category && category !== "All") {
-      matchStage.category = {
-        $regex: `^${category.trim()}$`,
-        $options: "i",
-      };
-    }
+    if (category && category !== "All")
+      matchStage.category = { $regex: `^${category}$`, $options: "i" };
 
-    if (minQty !== undefined) matchStage.minQty = Number(minQty);
-    if (currentStock !== undefined)
+    if (warehouseReck)
+      matchStage.warehouseReck = { $regex: warehouseReck, $options: "i" };
+
+    if (minQty !== "" && minQty !== undefined)
+      matchStage.minQty = Number(minQty);
+
+    if (currentStock !== "" && currentStock !== undefined)
       matchStage.currentStock = Number(currentStock);
 
     const pipeline = [
       { $match: matchStage },
+
+      /* ===== TEMPLE JOIN ===== */
 
       {
         $lookup: {
@@ -137,7 +132,10 @@ exports.listProducts = async (req, res) => {
           as: "temple",
         },
       },
+
       { $unwind: { path: "$temple", preserveNullAndEmptyArrays: true } },
+
+      /* ===== INWARD JOIN ===== */
 
       {
         $lookup: {
@@ -147,6 +145,9 @@ exports.listProducts = async (req, res) => {
           as: "inwardItems",
         },
       },
+
+      /* ===== OUTWARD JOIN ===== */
+
       {
         $lookup: {
           from: "outwarditems",
@@ -156,64 +157,132 @@ exports.listProducts = async (req, res) => {
         },
       },
 
+      /* ===== CALCULATED FIELDS ===== */
+
       {
         $addFields: {
+          templeName: "$temple.templeName",
+
           lastInwardDate: { $max: "$inwardItems.createdAt" },
           lastOutwardDate: { $max: "$outwardItems.createdAt" },
-          templeName: "$temple.templeName",
+
+          lastInwardDateString: {
+            $dateToString: {
+              format: "%d %b %Y",
+              date: { $max: "$inwardItems.createdAt" },
+            },
+          },
+
+          lastOutwardDateString: {
+            $dateToString: {
+              format: "%d %b %Y",
+              date: { $max: "$outwardItems.createdAt" },
+            },
+          },
+
+          /* lowercase fields for proper ABC sorting */
+
+          productNameLower: { $toLower: "$productName" },
+          categoryLower: { $toLower: "$category" },
+          warehouseReckLower: { $toLower: "$warehouseReck" },
+          templeNameLower: { $toLower: "$templeName" },
         },
       },
     ];
 
-    /* ================= GLOBAL SEARCH ================= */
+    /* ===== GLOBAL SEARCH ===== */
 
     if (search) {
+      const regex = new RegExp(search, "i");
+
+      const searchMatch = {
+        $or: [
+          { productName: regex },
+          { category: regex },
+          { warehouseReck: regex },
+          { templeName: regex },
+          { status: regex },
+          { uom: regex },
+          { lastInwardDateString: regex },
+          { lastOutwardDateString: regex },
+        ],
+      };
+
+      if (!isNaN(search)) {
+        searchMatch.$or.push({ minQty: Number(search) });
+        searchMatch.$or.push({ currentStock: Number(search) });
+      }
+
+      pipeline.push({ $match: searchMatch });
+    }
+
+    /* ===== INWARD DATE RANGE ===== */
+
+    if (startInwardDate || endInwardDate) {
+      const inwardFilter = {};
+
+      if (startInwardDate)
+        inwardFilter.$gte = new Date(startInwardDate + "T00:00:00");
+
+      if (endInwardDate)
+        inwardFilter.$lte = new Date(endInwardDate + "T23:59:59");
+
       pipeline.push({
-        $match: {
-          $or: [
-            { productName: { $regex: search, $options: "i" } },
-            { category: { $regex: search, $options: "i" } },
-            { templeName: { $regex: search, $options: "i" } },
-            { status: { $regex: search, $options: "i" } },
-          ],
-        },
+        $match: { lastInwardDate: inwardFilter },
       });
     }
 
-    if (lastInwardDate) {
+    /* ===== OUTWARD DATE RANGE ===== */
+
+    if (startOutwardDate || endOutwardDate) {
+      const outwardFilter = {};
+
+      if (startOutwardDate)
+        outwardFilter.$gte = new Date(startOutwardDate + "T00:00:00");
+
+      if (endOutwardDate)
+        outwardFilter.$lte = new Date(endOutwardDate + "T23:59:59");
+
       pipeline.push({
-        $match: {
-          lastInwardDate: {
-            $gte: new Date(lastInwardDate + "T00:00:00"),
-            $lte: new Date(lastInwardDate + "T23:59:59"),
-          },
-        },
+        $match: { lastOutwardDate: outwardFilter },
       });
     }
 
-    if (lastOutwardDate) {
-      pipeline.push({
-        $match: {
-          lastOutwardDate: {
-            $gte: new Date(lastOutwardDate + "T00:00:00"),
-            $lte: new Date(lastOutwardDate + "T23:59:59"),
-          },
-        },
-      });
+    /* ===== SORTING ===== */
+
+    let sort = { createdAt: -1 };
+
+    if (sortField) {
+      const order = sortOrder === "asc" ? 1 : -1;
+
+      const sortFields = {
+        productName: "productNameLower",
+        category: "categoryLower",
+        warehouseReck: "warehouseReckLower",
+        templeName: "templeNameLower",
+      };
+
+      if (sortFields[sortField]) {
+        sort = { [sortFields[sortField]]: order };
+      } else {
+        sort = { [sortField]: order };
+      }
     }
+
+    pipeline.push({ $sort: sort });
+
+    /* ===== REMOVE EXTRA DATA ===== */
 
     pipeline.push({
       $project: {
         inwardItems: 0,
         outwardItems: 0,
         temple: 0,
+        productNameLower: 0,
+        categoryLower: 0,
+        warehouseReckLower: 0,
+        templeNameLower: 0,
       },
-    });
-
-    pipeline.push({
-      $sort: sortField
-        ? { [sortField]: sortOrder === "asc" ? 1 : -1 }
-        : { createdAt: -1 },
     });
 
     const products = await Product.aggregate(pipeline);
@@ -226,68 +295,60 @@ exports.listProducts = async (req, res) => {
 
     return res.json(formattedProducts);
   } catch (error) {
+    console.log(error);
     return res.status(500).json({ message: error.message });
   }
 };
 
 /* ================= UPDATE PRODUCT ================= */
-
 exports.updateProduct = async (req, res) => {
   try {
+
     const { id, ...updateData } = req.body || {};
 
     if (!id) {
-      return res.status(400).json({ message: "Product ID is required" });
-    }
-
-    if (
-      updateData.productName !== undefined &&
-      !updateData.productName.trim()
-    ) {
-      return res.status(400).json({ message: "Product name cannot be empty" });
-    }
-
-    if (updateData.category !== undefined && !updateData.category.trim()) {
-      return res.status(400).json({ message: "Category cannot be empty" });
-    }
-
-    if (updateData.minQty !== undefined && Number(updateData.minQty) < 0) {
-      return res
-        .status(400)
-        .json({ message: "Minimum quantity cannot be negative" });
-    }
-
-    if (
-      updateData.currentStock !== undefined &&
-      Number(updateData.currentStock) < 0
-    ) {
-      return res
-        .status(400)
-        .json({ message: "Current stock cannot be negative" });
-    }
-
-    if (
-      updateData.status &&
-      !["Active", "Inactive"].includes(updateData.status)
-    ) {
-      return res.status(400).json({ message: "Invalid product status" });
+      return res.status(400).json({
+        message: "Product ID is required",
+      });
     }
 
     const product = await Product.findOneAndUpdate(
       { _id: id, templeId: req.user.templeId },
       updateData,
-      { returnDocument: "after" },
+      { returnDocument: "after" }
     );
 
     if (!product) {
-      return res.status(404).json({ message: "Product not found" });
+      return res.status(404).json({
+        message: "Product not found",
+      });
     }
 
     return res.json({
       message: "Product updated successfully",
       product,
     });
+
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+
+    /* Duplicate key error */
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyValue)[0];
+
+      return res.status(400).json({
+        message: `${field} already exists`,
+      });
+    }
+
+    /* Invalid Mongo ObjectId */
+    if (error.name === "CastError") {
+      return res.status(400).json({
+        message: "Invalid Product ID",
+      });
+    }
+
+    return res.status(500).json({
+      message: "Something went wrong",
+    });
   }
 };

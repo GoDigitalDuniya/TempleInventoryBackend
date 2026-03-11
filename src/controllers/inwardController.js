@@ -4,13 +4,19 @@ const Product = require("../models/product.model");
 
 const formatDate = (date) => {
   if (!date) return null;
-  return new Date(date).toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-};
 
+  return new Date(date)
+    .toLocaleString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: "Asia/Kolkata",
+    })
+    .replace(",", "");
+};
 /* ================= CREATE INWARD ================= */
 
 exports.createInward = async (req, res) => {
@@ -123,7 +129,6 @@ exports.createInward = async (req, res) => {
 };
 
 /* ================= GET INWARD LIST ================= */
-
 exports.getInwardList = async (req, res) => {
   try {
     const {
@@ -139,45 +144,122 @@ exports.getInwardList = async (req, res) => {
       sortOrder,
     } = req.body || {};
 
-    const filter = { templeId: req.user.templeId };
+    const match = {
+      templeId: req.user.templeId,
+    };
 
-    if (vendorName) filter.vendorName = { $regex: vendorName, $options: "i" };
+    /* ===== COLUMN FILTER ===== */
+
+    if (vendorName)
+      match.vendorName = { $regex: vendorName, $options: "i" };
 
     if (vendorMobile)
-      filter.vendorMobile = { $regex: vendorMobile, $options: "i" };
+      match.vendorMobile = { $regex: vendorMobile, $options: "i" };
 
     if (vendorAddress)
-      filter.vendorAddress = { $regex: vendorAddress, $options: "i" };
+      match.vendorAddress = { $regex: vendorAddress, $options: "i" };
 
-    if (challanNo) filter.challanNo = { $regex: challanNo, $options: "i" };
+    if (challanNo)
+      match.challanNo = { $regex: challanNo, $options: "i" };
 
-    if (status && status !== "All") filter.status = status;
+    if (status && status !== "All")
+      match.status = status;
+
+    /* ===== DATE RANGE FILTER ===== */
 
     if (startDate && endDate) {
-      filter.inwardDate = {
+      match.inwardDate = {
         $gte: new Date(startDate + "T00:00:00"),
         $lte: new Date(endDate + "T23:59:59"),
       };
     }
 
+    let pipeline = [
+      { $match: match },
+
+      /* ===== ADD COMPUTED FIELDS ===== */
+
+      {
+        $addFields: {
+          inwardDateString: {
+            $dateToString: {
+              format: "%d %b %Y",
+              date: "$inwardDate",
+            },
+          },
+
+          createdDateString: {
+            $dateToString: {
+              format: "%d %b %Y",
+              date: "$createdAt",
+            },
+          },
+
+          /* lowercase fields for ABC sorting */
+
+          vendorNameLower: { $toLower: "$vendorName" },
+          vendorMobileLower: { $toLower: "$vendorMobile" },
+          vendorAddressLower: { $toLower: "$vendorAddress" },
+          challanNoLower: { $toLower: "$challanNo" },
+          statusLower: { $toLower: "$status" },
+        },
+      },
+    ];
+
+    /* ===== GLOBAL SEARCH ===== */
+
     if (search) {
-      filter.$or = [
-        { vendorName: { $regex: search, $options: "i" } },
-        { vendorMobile: { $regex: search, $options: "i" } },
-        { vendorAddress: { $regex: search, $options: "i" } },
-        { challanNo: { $regex: search, $options: "i" } },
-      ];
+      pipeline.push({
+        $match: {
+          $or: [
+            { vendorName: { $regex: search, $options: "i" } },
+            { vendorMobile: { $regex: search, $options: "i" } },
+            { vendorAddress: { $regex: search, $options: "i" } },
+            { challanNo: { $regex: search, $options: "i" } },
+            { inwardDateString: { $regex: search, $options: "i" } },
+            { createdDateString: { $regex: search, $options: "i" } },
+          ],
+        },
+      });
     }
 
-    let sortOptions = { createdAt: -1 };
+    /* ===== SORT ===== */
+
+    let sort = { createdAt: -1 };
 
     if (sortField) {
-      sortOptions = {
-        [sortField]: sortOrder === "asc" ? 1 : -1,
+      const order = sortOrder === "asc" ? 1 : -1;
+
+      const sortFields = {
+        vendorName: "vendorNameLower",
+        vendorMobile: "vendorMobileLower",
+        vendorAddress: "vendorAddressLower",
+        challanNo: "challanNoLower",
+        status: "statusLower",
       };
+
+      if (sortFields[sortField]) {
+        sort = { [sortFields[sortField]]: order };
+      } else {
+        sort = { [sortField]: order };
+      }
     }
 
-    const inwards = await Inward.find(filter).sort(sortOptions);
+    pipeline.push({ $sort: sort });
+
+    /* ===== REMOVE TEMP FIELDS ===== */
+
+    pipeline.push({
+      $project: {
+        vendorNameLower: 0,
+        vendorMobileLower: 0,
+        vendorAddressLower: 0,
+        challanNoLower: 0,
+        statusLower: 0,
+      },
+    });
+
+    const inwards = await Inward.aggregate(pipeline);
 
     const result = await Promise.all(
       inwards.map(async (inward) => {
@@ -186,23 +268,28 @@ exports.getInwardList = async (req, res) => {
         }).populate("productId", "productName");
 
         return {
-          ...inward.toObject(),
+          ...inward,
           inwardDate: formatDate(inward.inwardDate),
+          createdAt: formatDate(inward.createdAt),
           items,
         };
-      }),
+      })
     );
 
     return res.json(result);
+
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    return res.status(500).json({
+      message: "Internal Server Error",
+      error: error.message,
+    });
   }
 };
-
 /* ================= UPDATE INWARD ================= */
 
 exports.updateInward = async (req, res) => {
   try {
+
     const {
       inwardId,
       vendorName,
@@ -214,26 +301,51 @@ exports.updateInward = async (req, res) => {
       items,
     } = req.body;
 
-    if (!inwardId)
-      return res.status(400).json({ message: "Inward ID is required" });
+    /* ================= VALIDATION ================= */
 
-    if (!vendorName?.trim())
-      return res.status(400).json({ message: "Vendor name is required" });
+    if (!inwardId) {
+      return res.status(400).json({
+        message: "Inward ID is required",
+      });
+    }
 
-    if (!vendorAddress?.trim())
-      return res.status(400).json({ message: "Vendor address is required" });
+    if (!vendorName?.trim()) {
+      return res.status(400).json({
+        message: "Vendor name is required",
+      });
+    }
 
-    if (!challanNo?.trim())
-      return res.status(400).json({ message: "Challan number is required" });
+    if (!vendorAddress?.trim()) {
+      return res.status(400).json({
+        message: "Vendor address is required",
+      });
+    }
 
-    if (!inwardDate)
-      return res.status(400).json({ message: "Inward date is required" });
+    if (!challanNo?.trim()) {
+      return res.status(400).json({
+        message: "Challan number is required",
+      });
+    }
 
-    if (!Array.isArray(items) || items.length === 0)
-      return res.status(400).json({ message: "At least one item is required" });
+    if (!inwardDate) {
+      return res.status(400).json({
+        message: "Inward date is required",
+      });
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        message: "At least one item is required",
+      });
+    }
+
+    /* ================= UPDATE INWARD ================= */
 
     const inward = await Inward.findOneAndUpdate(
-      { _id: inwardId, templeId: req.user.templeId },
+      {
+        _id: inwardId,
+        templeId: req.user.templeId,
+      },
       {
         vendorName: vendorName.trim(),
         vendorMobile,
@@ -242,9 +354,18 @@ exports.updateInward = async (req, res) => {
         inwardDate,
         description,
       },
-      { returnDocument: "after" },
+      {
+        returnDocument: "after",
+      }
     );
-    if (!inward) return res.status(404).json({ message: "Inward not found" });
+
+    if (!inward) {
+      return res.status(404).json({
+        message: "Inward not found",
+      });
+    }
+
+    /* ================= RESTORE OLD STOCK ================= */
 
     const oldItems = await InwardItem.find({ inwardId });
 
@@ -254,9 +375,14 @@ exports.updateInward = async (req, res) => {
       });
     }
 
+    /* ================= DELETE OLD ITEMS ================= */
+
     await InwardItem.deleteMany({ inwardId });
 
+    /* ================= CREATE NEW ITEMS ================= */
+
     for (const item of items) {
+
       await InwardItem.create({
         inwardId,
         productId: item.productId,
@@ -271,12 +397,35 @@ exports.updateInward = async (req, res) => {
       });
     }
 
-    return res.json({ message: "Inward updated successfully" });
+    /* ================= SUCCESS ================= */
+
+    return res.json({
+      message: "Inward updated successfully",
+    });
+
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+
+    /* Duplicate key error */
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyValue)[0];
+
+      return res.status(400).json({
+        message: `${field} already exists`,
+      });
+    }
+
+    /* Invalid ObjectId */
+    if (error.name === "CastError") {
+      return res.status(400).json({
+        message: "Invalid ID format",
+      });
+    }
+
+    return res.status(500).json({
+      message: "Something went wrong",
+    });
   }
 };
-
 /* ================= DELETE INWARD ================= */
 
 exports.deleteInward = async (req, res) => {

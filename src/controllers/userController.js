@@ -1,17 +1,21 @@
 const User = require("../models/user.model");
 
 /* ================= DATE FORMATTER ================= */
-
 const formatDate = (date) => {
   if (!date) return null;
 
-  return new Date(date).toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
+  return new Date(date)
+    .toLocaleString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: "Asia/Kolkata",
+    })
+    .replace(",", "");
 };
-
 /* ================= CREATE USER ================= */
 
 exports.createUser = async (req, res) => {
@@ -91,7 +95,6 @@ exports.createUser = async (req, res) => {
 };
 
 /* ================= LIST USERS ================= */
-
 exports.listUsers = async (req, res) => {
   try {
 
@@ -108,87 +111,168 @@ exports.listUsers = async (req, res) => {
       sortOrder,
     } = req.body || {};
 
-    const filter = {};
+    const match = {};
 
-    /* ================= TEMPLE SECURITY ================= */
+    /* ===== TEMPLE SECURITY ===== */
 
     if (req.user.role === "Admin") {
-      if (templeId) filter.templeId = templeId;
+      if (templeId) match.templeId = templeId;
     } else {
-      filter.templeId = req.user.templeId;
+      match.templeId = req.user.templeId;
     }
 
-    /* ================= FILTERS ================= */
+    /* ===== COLUMN FILTERS ===== */
 
     if (role && role !== "Role") {
-      filter.role = { $regex: role, $options: "i" };
+      match.role = { $regex: role, $options: "i" };
     }
 
     if (status && status !== "All") {
-      filter.status = status;
+      match.status = status;
     }
 
     if (userName) {
-      filter.userName = { $regex: userName, $options: "i" };
+      match.userName = { $regex: userName, $options: "i" };
     }
 
     if (loginId) {
-      filter.loginId = { $regex: loginId, $options: "i" };
+      match.loginId = { $regex: loginId, $options: "i" };
     }
 
     if (mobile) {
-      filter.mobile = { $regex: mobile, $options: "i" };
+      match.mobile = { $regex: mobile, $options: "i" };
     }
 
-    /* ================= GLOBAL SEARCH ================= */
+    const pipeline = [
+      { $match: match },
 
-    if (search) {
-      filter.$or = [
-        { userName: { $regex: search, $options: "i" } },
-        { loginId: { $regex: search, $options: "i" } },
-        { mobile: { $regex: search, $options: "i" } },
-        { role: { $regex: search, $options: "i" } },
-        { status: { $regex: search, $options: "i" } },
-      ];
-    }
+      /* ===== JOIN TEMPLE ===== */
 
-    /* ================= QUERY ================= */
+      {
+        $lookup: {
+          from: "temples",
+          localField: "templeId",
+          foreignField: "_id",
+          as: "temple",
+        },
+      },
 
-    const users = await User.find(filter)
-      .populate("templeId", "templeName")
-      .sort(sortField ? { [sortField]: sortOrder === "asc" ? 1 : -1 } : { createdAt: -1 })
-      .lean();
+      {
+        $unwind: {
+          path: "$temple",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
 
-    /* ================= TEMPLE FILTER ================= */
+      {
+        $addFields: {
+          templeName: "$temple.templeName",
 
-    let result = users;
+          /* lowercase fields for ABC sorting */
+
+          userNameLower: { $toLower: "$userName" },
+          loginIdLower: { $toLower: "$loginId" },
+          mobileLower: { $toLower: "$mobile" },
+          roleLower: { $toLower: "$role" },
+          statusLower: { $toLower: "$status" },
+          templeNameLower: { $toLower: "$temple.templeName" },
+        },
+      },
+    ];
+
+    /* ===== TEMPLE NAME FILTER ===== */
 
     if (templeName) {
-      result = users.filter((u) =>
-        u.templeId?.templeName?.toLowerCase().includes(templeName.toLowerCase())
-      );
+      pipeline.push({
+        $match: {
+          templeName: { $regex: templeName, $options: "i" },
+        },
+      });
     }
 
-    /* ================= FORMAT ================= */
+    /* ===== GLOBAL SEARCH ===== */
 
-    const formattedUsers = result.map((u) => ({
+    if (search) {
+      pipeline.push({
+        $match: {
+          $or: [
+            { userName: { $regex: search, $options: "i" } },
+            { loginId: { $regex: search, $options: "i" } },
+            { mobile: { $regex: search, $options: "i" } },
+            { role: { $regex: search, $options: "i" } },
+            { status: { $regex: search, $options: "i" } },
+            { templeName: { $regex: search, $options: "i" } },
+          ],
+        },
+      });
+    }
+
+    /* ===== SORT ===== */
+
+    let sort = { createdAt: -1 };
+
+    if (sortField) {
+
+      const order = sortOrder === "asc" ? 1 : -1;
+
+      const sortFields = {
+        userName: "userNameLower",
+        loginId: "loginIdLower",
+        mobile: "mobileLower",
+        role: "roleLower",
+        status: "statusLower",
+        templeId: "templeNameLower",
+        templeName: "templeNameLower",
+      };
+
+      if (sortFields[sortField]) {
+        sort = { [sortFields[sortField]]: order };
+      } else {
+        sort = { [sortField]: order };
+      }
+    }
+
+    pipeline.push({ $sort: sort });
+
+    /* ===== REMOVE TEMP FIELDS ===== */
+
+    pipeline.push({
+      $project: {
+        temple: 0,
+        userNameLower: 0,
+        loginIdLower: 0,
+        mobileLower: 0,
+        roleLower: 0,
+        statusLower: 0,
+        templeNameLower: 0,
+      },
+    });
+
+    const users = await User.aggregate(pipeline);
+
+    /* ===== FORMAT ===== */
+
+    const formattedUsers = users.map((u) => ({
       ...u,
-      templeName: u.templeId ? u.templeId.templeName : "---",
       createdAt: formatDate(u.createdAt),
       updatedAt: formatDate(u.updatedAt),
+      templeName: u.templeName || "---",
     }));
 
     return res.json(formattedUsers);
 
   } catch (error) {
+
+    console.log(error);
+
     return res.status(500).json({
       message: error.message,
     });
+
   }
 };
 
 /* ================= UPDATE USER ================= */
-
 exports.updateUser = async (req, res) => {
   try {
 
@@ -222,8 +306,18 @@ exports.updateUser = async (req, res) => {
     });
 
   } catch (error) {
+
+    // ⭐ Duplicate loginId error
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyValue)[0];
+
+      return res.status(400).json({
+        message: `${field} already exists`,
+      });
+    }
+
     return res.status(500).json({
-      message: error.message,
+      message: "Something went wrong",
     });
   }
 };

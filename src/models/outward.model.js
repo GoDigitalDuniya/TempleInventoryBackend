@@ -36,7 +36,7 @@ const outwardSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["Active", "Inactive"],
+      enum: ["Active", "Deactive"],
       default: "Active",
     },
 

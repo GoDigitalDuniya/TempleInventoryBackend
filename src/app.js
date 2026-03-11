@@ -9,6 +9,8 @@ const inwardRoutes = require("./routes/inwardRoutes");
 const outwardRoutes = require("./routes/outwardRoutes");
 const userRoutes = require("./routes/userRoutes");
 const stockRoutes = require("./routes/stockRoutes");
+const versionRoutes = require("./routes/versionRoutes");
+
 
 
 const app = express();
@@ -34,6 +36,7 @@ app.use("/api/products", productRoutes);
 app.use("/api/inward", inwardRoutes);
 app.use("/api/outward", outwardRoutes);
 app.use("/api/stock", stockRoutes);
+app.use("/api/version", versionRoutes);
 
 /* ========== TEST ROUTE ========== */
 

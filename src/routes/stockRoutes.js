@@ -1,14 +1,14 @@
 const router = require("express").Router();
 const stockController = require("../controllers/stockController");
 const auth = require("../middlewares/authMiddleware");
+const versionCheck = require("../middlewares/versionCheck");
+router.post("/list", auth,versionCheck, stockController.getStockList);
 
-router.post("/list", auth, stockController.getStockList);
 
+router.post("/transactions", auth,versionCheck, stockController.getTransactionHistory);
 
-router.post("/transactions", auth, stockController.getTransactionHistory);
+router.post("/inward-history", auth,versionCheck, stockController.getProductInwardHistory);
 
-router.post("/inward-history", auth, stockController.getProductInwardHistory);
-
-router.post("/outward-history", auth, stockController.getProductOutwardHistory);
+router.post("/outward-history", auth,versionCheck, stockController.getProductOutwardHistory);
 
 module.exports = router;
