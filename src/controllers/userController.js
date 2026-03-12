@@ -109,6 +109,8 @@ exports.listUsers = async (req, res) => {
       templeId,
       sortField,
       sortOrder,
+      startLoginDate,
+      endLoginDate
     } = req.body || {};
 
     const match = {};
@@ -143,6 +145,26 @@ exports.listUsers = async (req, res) => {
       match.mobile = { $regex: mobile, $options: "i" };
     }
 
+    /* ===== LOGIN DATE FILTER ===== */
+
+    if (startLoginDate || endLoginDate) {
+
+      match.lastLogin = {};
+
+      if (startLoginDate) {
+        const start = new Date(startLoginDate);
+        start.setHours(0,0,0,0);
+        match.lastLogin.$gte = start;
+      }
+
+      if (endLoginDate) {
+        const end = new Date(endLoginDate);
+        end.setHours(23,59,59,999);
+        match.lastLogin.$lte = end;
+      }
+
+    }
+
     const pipeline = [
       { $match: match },
 
@@ -167,8 +189,6 @@ exports.listUsers = async (req, res) => {
       {
         $addFields: {
           templeName: "$temple.templeName",
-
-          /* lowercase fields for ABC sorting */
 
           userNameLower: { $toLower: "$userName" },
           loginIdLower: { $toLower: "$loginId" },
@@ -271,7 +291,6 @@ exports.listUsers = async (req, res) => {
 
   }
 };
-
 /* ================= UPDATE USER ================= */
 exports.updateUser = async (req, res) => {
   try {

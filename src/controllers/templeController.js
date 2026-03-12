@@ -98,6 +98,7 @@ exports.createTemple = async (req, res) => {
 
 exports.getTempleList = async (req, res) => {
   try {
+
     const {
       search,
       templeName,
@@ -154,9 +155,11 @@ exports.getTempleList = async (req, res) => {
     let sortedTemples = temples;
 
     if (sortField) {
+
       const order = sortOrder === "asc" ? 1 : -1;
 
       sortedTemples = temples.sort((a, b) => {
+
         let valA = a[sortField];
         let valB = b[sortField];
 
@@ -168,11 +171,19 @@ exports.getTempleList = async (req, res) => {
 
         if (valA > valB) return order;
         if (valA < valB) return -order;
+
         return 0;
+
       });
 
     } else {
-      sortedTemples = temples.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+      /* ===== DEFAULT ABCD SORT ===== */
+
+      sortedTemples = temples.sort((a, b) =>
+        a.templeName.toLowerCase().localeCompare(b.templeName.toLowerCase())
+      );
+
     }
 
     /* ================= FORMAT DATES ================= */
@@ -186,10 +197,13 @@ exports.getTempleList = async (req, res) => {
     return res.json(formattedTemples);
 
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+
+    return res.status(500).json({
+      message: error.message
+    });
+
   }
 };
-
 
 /* ================= UPDATE TEMPLE ================= */
 exports.updateTemple = async (req, res) => {

@@ -17,6 +17,7 @@ const formatDate = (date) => {
     })
     .replace(",", "");
 };
+
 /* ================= CREATE INWARD ================= */
 
 exports.createInward = async (req, res) => {
@@ -30,8 +31,6 @@ exports.createInward = async (req, res) => {
       description,
       items,
     } = req.body;
-
-    /* ========= PROFESSIONAL VALIDATION ========= */
 
     if (!vendorName || !vendorName.trim()) {
       return res.status(400).json({ message: "Vendor name is required" });
@@ -75,8 +74,6 @@ exports.createInward = async (req, res) => {
       }
     }
 
-    /* ========= DUPLICATE CHALLAN CHECK ========= */
-
     const exists = await Inward.findOne({
       challanNo: challanNo.trim(),
       templeId: req.user.templeId,
@@ -88,12 +85,10 @@ exports.createInward = async (req, res) => {
       });
     }
 
-    /* ========= CREATE INWARD ========= */
-
     const inward = await Inward.create({
       templeId: req.user.templeId,
       vendorName: vendorName.trim(),
-      vendorMobile, // optional no rule
+      vendorMobile,
       vendorAddress: vendorAddress.trim(),
       challanNo: challanNo.trim(),
       inwardDate,
@@ -120,6 +115,7 @@ exports.createInward = async (req, res) => {
     return res.status(201).json({
       message: "Inward created successfully",
     });
+
   } catch (error) {
     return res.status(500).json({
       message: "Internal Server Error",
@@ -131,6 +127,7 @@ exports.createInward = async (req, res) => {
 /* ================= GET INWARD LIST ================= */
 exports.getInwardList = async (req, res) => {
   try {
+
     const {
       search,
       vendorName,
@@ -148,8 +145,6 @@ exports.getInwardList = async (req, res) => {
       templeId: req.user.templeId,
     };
 
-    /* ===== COLUMN FILTER ===== */
-
     if (vendorName)
       match.vendorName = { $regex: vendorName, $options: "i" };
 
@@ -165,8 +160,6 @@ exports.getInwardList = async (req, res) => {
     if (status && status !== "All")
       match.status = status;
 
-    /* ===== DATE RANGE FILTER ===== */
-
     if (startDate && endDate) {
       match.inwardDate = {
         $gte: new Date(startDate + "T00:00:00"),
@@ -175,12 +168,33 @@ exports.getInwardList = async (req, res) => {
     }
 
     let pipeline = [
+
       { $match: match },
 
-      /* ===== ADD COMPUTED FIELDS ===== */
+      /* JOIN USER */
+
+      {
+        $lookup: {
+          from: "users",
+          localField: "createdBy",
+          foreignField: "_id",
+          as: "user",
+        },
+      },
+
+      {
+        $unwind: {
+          path: "$user",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
 
       {
         $addFields: {
+
+          inwardBy: "$user.userName",
+          inwardByLower: { $toLower: "$user.userName" },
+
           inwardDateString: {
             $dateToString: {
               format: "%d %b %Y",
@@ -195,8 +209,6 @@ exports.getInwardList = async (req, res) => {
             },
           },
 
-          /* lowercase fields for ABC sorting */
-
           vendorNameLower: { $toLower: "$vendorName" },
           vendorMobileLower: { $toLower: "$vendorMobile" },
           vendorAddressLower: { $toLower: "$vendorAddress" },
@@ -206,28 +218,34 @@ exports.getInwardList = async (req, res) => {
       },
     ];
 
-    /* ===== GLOBAL SEARCH ===== */
+    /* GLOBAL SEARCH */
 
     if (search) {
+
+      const searchLower = search.toLowerCase();
+
       pipeline.push({
         $match: {
           $or: [
-            { vendorName: { $regex: search, $options: "i" } },
-            { vendorMobile: { $regex: search, $options: "i" } },
-            { vendorAddress: { $regex: search, $options: "i" } },
-            { challanNo: { $regex: search, $options: "i" } },
+            { vendorNameLower: { $regex: searchLower } },
+            { vendorMobileLower: { $regex: searchLower } },
+            { vendorAddressLower: { $regex: searchLower } },
+            { challanNoLower: { $regex: searchLower } },
+            { inwardByLower: { $regex: searchLower } },
             { inwardDateString: { $regex: search, $options: "i" } },
             { createdDateString: { $regex: search, $options: "i" } },
           ],
         },
       });
+
     }
 
-    /* ===== SORT ===== */
+    /* SORT */
 
     let sort = { createdAt: -1 };
 
     if (sortField) {
+
       const order = sortOrder === "asc" ? 1 : -1;
 
       const sortFields = {
@@ -236,18 +254,17 @@ exports.getInwardList = async (req, res) => {
         vendorAddress: "vendorAddressLower",
         challanNo: "challanNoLower",
         status: "statusLower",
+        inwardBy: "inwardByLower",
       };
 
-      if (sortFields[sortField]) {
+      if (sortFields[sortField])
         sort = { [sortFields[sortField]]: order };
-      } else {
+      else
         sort = { [sortField]: order };
-      }
+
     }
 
     pipeline.push({ $sort: sort });
-
-    /* ===== REMOVE TEMP FIELDS ===== */
 
     pipeline.push({
       $project: {
@@ -256,6 +273,8 @@ exports.getInwardList = async (req, res) => {
         vendorAddressLower: 0,
         challanNoLower: 0,
         statusLower: 0,
+        inwardByLower: 0,
+        user: 0,
       },
     });
 
@@ -263,6 +282,7 @@ exports.getInwardList = async (req, res) => {
 
     const result = await Promise.all(
       inwards.map(async (inward) => {
+
         const items = await InwardItem.find({
           inwardId: inward._id,
         }).populate("productId", "productName");
@@ -273,16 +293,19 @@ exports.getInwardList = async (req, res) => {
           createdAt: formatDate(inward.createdAt),
           items,
         };
+
       })
     );
 
     return res.json(result);
 
   } catch (error) {
+
     return res.status(500).json({
       message: "Internal Server Error",
       error: error.message,
     });
+
   }
 };
 /* ================= UPDATE INWARD ================= */
@@ -301,45 +324,23 @@ exports.updateInward = async (req, res) => {
       items,
     } = req.body;
 
-    /* ================= VALIDATION ================= */
+    if (!inwardId)
+      return res.status(400).json({ message: "Inward ID is required" });
 
-    if (!inwardId) {
-      return res.status(400).json({
-        message: "Inward ID is required",
-      });
-    }
+    if (!vendorName?.trim())
+      return res.status(400).json({ message: "Vendor name is required" });
 
-    if (!vendorName?.trim()) {
-      return res.status(400).json({
-        message: "Vendor name is required",
-      });
-    }
+    if (!vendorAddress?.trim())
+      return res.status(400).json({ message: "Vendor address is required" });
 
-    if (!vendorAddress?.trim()) {
-      return res.status(400).json({
-        message: "Vendor address is required",
-      });
-    }
+    if (!challanNo?.trim())
+      return res.status(400).json({ message: "Challan number is required" });
 
-    if (!challanNo?.trim()) {
-      return res.status(400).json({
-        message: "Challan number is required",
-      });
-    }
+    if (!inwardDate)
+      return res.status(400).json({ message: "Inward date is required" });
 
-    if (!inwardDate) {
-      return res.status(400).json({
-        message: "Inward date is required",
-      });
-    }
-
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({
-        message: "At least one item is required",
-      });
-    }
-
-    /* ================= UPDATE INWARD ================= */
+    if (!Array.isArray(items) || items.length === 0)
+      return res.status(400).json({ message: "At least one item is required" });
 
     const inward = await Inward.findOneAndUpdate(
       {
@@ -359,13 +360,8 @@ exports.updateInward = async (req, res) => {
       }
     );
 
-    if (!inward) {
-      return res.status(404).json({
-        message: "Inward not found",
-      });
-    }
-
-    /* ================= RESTORE OLD STOCK ================= */
+    if (!inward)
+      return res.status(404).json({ message: "Inward not found" });
 
     const oldItems = await InwardItem.find({ inwardId });
 
@@ -375,11 +371,7 @@ exports.updateInward = async (req, res) => {
       });
     }
 
-    /* ================= DELETE OLD ITEMS ================= */
-
     await InwardItem.deleteMany({ inwardId });
-
-    /* ================= CREATE NEW ITEMS ================= */
 
     for (const item of items) {
 
@@ -395,9 +387,8 @@ exports.updateInward = async (req, res) => {
       await Product.findByIdAndUpdate(item.productId, {
         $inc: { currentStock: Number(item.qty) },
       });
-    }
 
-    /* ================= SUCCESS ================= */
+    }
 
     return res.json({
       message: "Inward updated successfully",
@@ -405,16 +396,13 @@ exports.updateInward = async (req, res) => {
 
   } catch (error) {
 
-    /* Duplicate key error */
     if (error.code === 11000) {
       const field = Object.keys(error.keyValue)[0];
-
       return res.status(400).json({
         message: `${field} already exists`,
       });
     }
 
-    /* Invalid ObjectId */
     if (error.name === "CastError") {
       return res.status(400).json({
         message: "Invalid ID format",
@@ -424,51 +412,50 @@ exports.updateInward = async (req, res) => {
     return res.status(500).json({
       message: "Something went wrong",
     });
+
   }
 };
+
 /* ================= DELETE INWARD ================= */
 
 exports.deleteInward = async (req, res) => {
   try {
+
     const { inwardId } = req.body;
 
-    if (!inwardId) {
+    if (!inwardId)
       return res.status(400).json({ message: "Inward ID is required" });
-    }
 
-    // 🔍 Find inward (temple safe)
     const inward = await Inward.findOne({
       _id: inwardId,
       templeId: req.user.templeId,
     });
 
-    if (!inward) {
+    if (!inward)
       return res.status(404).json({ message: "Inward not found" });
-    }
 
-    // 📦 Get all inward items
     const items = await InwardItem.find({ inwardId });
 
-    // 🔻 Reverse stock
     for (const item of items) {
       await Product.findByIdAndUpdate(item.productId, {
         $inc: { currentStock: -Number(item.qty) },
       });
     }
 
-    // 🗑 Delete items
     await InwardItem.deleteMany({ inwardId });
 
-    // 🗑 Delete inward
     await Inward.deleteOne({ _id: inwardId });
 
     return res.json({
       message: "Inward deleted successfully",
     });
+
   } catch (error) {
+
     return res.status(500).json({
       message: "Internal Server Error",
       error: error.message,
     });
+
   }
 };
