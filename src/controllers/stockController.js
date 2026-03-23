@@ -489,6 +489,7 @@ exports.getSlowMovingStock = async (req, res) => {
     const {
       days,
       search,
+      status,
       productName,
       category,
       warehouseReck,
@@ -520,28 +521,61 @@ exports.getSlowMovingStock = async (req, res) => {
 
     const productIds = products.map(p => p._id);
 
-    const recentOutward = await OutwardItem.find({
-      productId: { $in: productIds },
-      createdAt: { $gte: dateLimit }
-    }).select("productId");
+    /* GET ALL OUTWARD ITEMS */
 
-    const outwardProductIds = new Set(
-      recentOutward.map(o => o.productId.toString())
-    );
+    const outwardItems = await OutwardItem.find({
+      productId: { $in: productIds }
+    }).select("productId outwardDate createdAt");
+
+    /* CREATE LAST OUTWARD DATE MAP */
+
+    const lastOutwardMap = {};
+
+    outwardItems.forEach(item => {
+      const pid = item.productId.toString();
+
+      const date = item.outwardDate || item.createdAt;
+
+      if (!lastOutwardMap[pid] || date > lastOutwardMap[pid]) {
+        lastOutwardMap[pid] = date;
+      }
+    });
+
+    /* FILTER SLOW MOVING PRODUCTS */
 
     let slowProducts = products
-      .filter(p => !outwardProductIds.has(p._id.toString()))
-      .map(p => ({
-        status: p.status,
-        productName: p.productName,
-        category: p.category,
-        uom: p.uom,
-        minQty: p.minQty,
-        currentStock: p.currentStock,
-        warehouseReck: p.warehouseReck,
-        templeName: p.templeId?.templeName || ""
-      }));
+      .filter(p => {
+        const lastOutward = lastOutwardMap[p._id.toString()];
 
+        if (!lastOutward) return true;
+
+        return new Date(lastOutward) < dateLimit;
+      })
+      .map(p => {
+        const lastOutward = lastOutwardMap[p._id.toString()];
+
+        return {
+          status: p.status,
+          productName: p.productName,
+          category: p.category,
+          uom: p.uom,
+          minQty: p.minQty,
+          currentStock: p.currentStock,
+          warehouseReck: p.warehouseReck,
+          templeName: p.templeId?.templeName || "",
+          lastOutwardDate: lastOutward
+            ? new Date(lastOutward).toISOString().split("T")[0]
+            : "No Outward"
+        };
+      });
+
+    /* STATUS FILTER */
+
+    if (status && status !== "All") {
+      slowProducts = slowProducts.filter(
+        p => p.status.toLowerCase() === status.toLowerCase()
+      );
+    }
 
     /* COLUMN SEARCH */
 
@@ -583,7 +617,6 @@ exports.getSlowMovingStock = async (req, res) => {
       );
     }
 
-
     /* GLOBAL SEARCH */
 
     if (search) {
@@ -599,12 +632,12 @@ exports.getSlowMovingStock = async (req, res) => {
           ${p.currentStock}
           ${p.warehouseReck}
           ${p.templeName}
+          ${p.lastOutwardDate}
         `.toLowerCase();
 
         return rowString.includes(s);
       });
     }
-
 
     /* SORTING */
 
@@ -633,14 +666,6 @@ exports.getSlowMovingStock = async (req, res) => {
       slowProducts.sort((a, b) =>
         a.productName.localeCompare(b.productName)
       );
-    }
-
-
-    if (!slowProducts.length) {
-      return res.status(200).json({
-        message: `No slow moving products found in last ${days} days`,
-        data: []
-      });
     }
 
     return res.status(200).json({

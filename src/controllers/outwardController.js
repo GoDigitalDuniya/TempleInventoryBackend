@@ -134,7 +134,6 @@ exports.createOutward = async (req, res) => {
 };
 
 /* ================= LIST OUTWARD ================= */
-
 exports.getOutwardList = async (req, res) => {
   try {
     const {
@@ -214,8 +213,6 @@ exports.getOutwardList = async (req, res) => {
               date: "$createdAt",
             },
           },
-
-          /* lowercase fields for ABC sorting */
 
           outwardNameLower: { $toLower: "$outwardName" },
           outwardMobileLower: { $toLower: "$outwardMobile" },
@@ -299,7 +296,7 @@ exports.getOutwardList = async (req, res) => {
       outwards.map(async (outward) => {
         const items = await OutwardItem.find({
           outwardId: outward._id,
-        }).populate("productId", "productName");
+        }).populate("productId", "productName uom"); // ✅ FINAL CHANGE
 
         return {
           ...outward,
@@ -319,12 +316,10 @@ exports.getOutwardList = async (req, res) => {
     });
   }
 };
-
 /* ================= UPDATE OUTWARD ================= */
 
 exports.updateOutward = async (req, res) => {
   try {
-
     const {
       outwardId,
       outwardName,
@@ -374,7 +369,6 @@ exports.updateOutward = async (req, res) => {
     /* ================= STOCK CHECK ================= */
 
     for (const item of items) {
-
       const product = await Product.findById(item.productId);
 
       if (!product) {
@@ -384,7 +378,6 @@ exports.updateOutward = async (req, res) => {
       }
 
       if (product.currentStock < Number(item.qty)) {
-
         /* rollback restored stock */
 
         for (const old of oldItems) {
@@ -419,7 +412,7 @@ exports.updateOutward = async (req, res) => {
       },
       {
         returnDocument: "after",
-      }
+      },
     );
 
     /* ================= DELETE OLD ITEMS ================= */
@@ -429,7 +422,6 @@ exports.updateOutward = async (req, res) => {
     /* ================= CREATE NEW ITEMS ================= */
 
     for (const item of items) {
-
       await OutwardItem.create({
         outwardId,
         productId: item.productId,
@@ -447,9 +439,7 @@ exports.updateOutward = async (req, res) => {
     return res.json({
       message: "Outward updated successfully",
     });
-
   } catch (error) {
-
     /* Duplicate key error */
     if (error.code === 11000) {
       const field = Object.keys(error.keyValue)[0];

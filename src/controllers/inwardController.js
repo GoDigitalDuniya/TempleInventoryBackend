@@ -124,10 +124,8 @@ exports.createInward = async (req, res) => {
   }
 };
 
-/* ================= GET INWARD LIST ================= */
 exports.getInwardList = async (req, res) => {
   try {
-
     const {
       search,
       vendorName,
@@ -168,10 +166,7 @@ exports.getInwardList = async (req, res) => {
     }
 
     let pipeline = [
-
       { $match: match },
-
-      /* JOIN USER */
 
       {
         $lookup: {
@@ -181,7 +176,6 @@ exports.getInwardList = async (req, res) => {
           as: "user",
         },
       },
-
       {
         $unwind: {
           path: "$user",
@@ -191,7 +185,6 @@ exports.getInwardList = async (req, res) => {
 
       {
         $addFields: {
-
           inwardBy: "$user.userName",
           inwardByLower: { $toLower: "$user.userName" },
 
@@ -218,10 +211,7 @@ exports.getInwardList = async (req, res) => {
       },
     ];
 
-    /* GLOBAL SEARCH */
-
     if (search) {
-
       const searchLower = search.toLowerCase();
 
       pipeline.push({
@@ -237,15 +227,11 @@ exports.getInwardList = async (req, res) => {
           ],
         },
       });
-
     }
-
-    /* SORT */
 
     let sort = { createdAt: -1 };
 
     if (sortField) {
-
       const order = sortOrder === "asc" ? 1 : -1;
 
       const sortFields = {
@@ -261,7 +247,6 @@ exports.getInwardList = async (req, res) => {
         sort = { [sortFields[sortField]]: order };
       else
         sort = { [sortField]: order };
-
     }
 
     pipeline.push({ $sort: sort });
@@ -282,10 +267,9 @@ exports.getInwardList = async (req, res) => {
 
     const result = await Promise.all(
       inwards.map(async (inward) => {
-
         const items = await InwardItem.find({
           inwardId: inward._id,
-        }).populate("productId", "productName");
+        }).populate("productId", "productName uom"); // ✅ FINAL CHANGE
 
         return {
           ...inward,
@@ -293,19 +277,15 @@ exports.getInwardList = async (req, res) => {
           createdAt: formatDate(inward.createdAt),
           items,
         };
-
       })
     );
 
     return res.json(result);
-
   } catch (error) {
-
     return res.status(500).json({
       message: "Internal Server Error",
       error: error.message,
     });
-
   }
 };
 /* ================= UPDATE INWARD ================= */
